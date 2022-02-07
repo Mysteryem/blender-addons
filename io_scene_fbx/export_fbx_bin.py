@@ -1166,8 +1166,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         def _uvtuples_gen(raw_uvs, raw_lvidxs):
             return zip(zip(*(iter(raw_uvs),) * 2), raw_lvidxs)
 
-        t_luv = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.loops) * 2
-        t_lvidx = array.array(data_types.ARRAY_INT32, (0,)) * len(me.loops)
+        t_luv = array.array('f', (0.0,)) * len(me.loops) * 2
+        t_lvidx = array.array('I', (0,)) * len(me.loops)
         me.loops.foreach_get("vertex_index", t_lvidx)
         for uvindex, uvlayer in enumerate(me.uv_layers):
             uvlayer.data.foreach_get("uv", t_luv)
@@ -1177,13 +1177,25 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_uv, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_uv, b"ReferenceInformationType", b"IndexToDirect")
 
-            uv_ids = tuple(set(_uvtuples_gen(t_luv, t_lvidx)))
-            elem_data_single_float64_array(lay_uv, b"UV", chain(*(uv for uv, vidx in uv_ids)))  # Flatten again...
+            next_unique_tuple_index = 0
+            uv2idx = {}
+            unique_uv_pairs = array.array(data_types.ARRAY_FLOAT64)
+            uv_indices = array.array(data_types.ARRAY_INT32, (0,)) * len(me.loops)
 
-            uv2idx = {uv_id: idx for idx, uv_id in enumerate(uv_ids)}
-            elem_data_single_int32_array(lay_uv, b"UVIndex", (uv2idx[uv_id] for uv_id in _uvtuples_gen(t_luv, t_lvidx)))
+            for index, uvidx in enumerate(_uvtuples_gen(t_luv, t_lvidx)):
+                tuple_index = uv2idx.setdefault(uvidx, next_unique_tuple_index)
+                is_new = tuple_index == next_unique_tuple_index
+                if is_new:
+                    uv = uvidx[0]
+                    unique_uv_pairs.extend(uv)
+                    next_unique_tuple_index += 1
+                uv_indices[index] = tuple_index
+
+            elem_data_single_float64_array(lay_uv, b"UV", unique_uv_pairs)
+            elem_data_single_int32_array(lay_uv, b"UVIndex", uv_indices)
             del uv2idx
-            del uv_ids
+            del unique_uv_pairs
+            del uv_indices
         del t_luv
         del t_lvidx
         del _uvtuples_gen
