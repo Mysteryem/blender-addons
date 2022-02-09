@@ -1131,14 +1131,28 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         for colindex, collayer in enumerate(me.color_attributes):
             is_point = collayer.domain == "POINT"
             vcollen = len(me.vertices if is_point else me.loops)
-            t_lc = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * vcollen * 4
+            t_lc = array.array('f', (0.0,)) * vcollen * 4
             collayer.data.foreach_get(color_prop_name, t_lc)
-
             lay_vcol = elem_data_single_int32(geom, b"LayerElementColor", colindex)
             elem_data_single_int32(lay_vcol, b"Version", FBX_GEOMETRY_VCOLOR_VERSION)
             elem_data_single_string_unicode(lay_vcol, b"Name", collayer.name)
             elem_data_single_string(lay_vcol, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_vcol, b"ReferenceInformationType", b"IndexToDirect")
+
+            # next_unique_tuple_index = 0
+            # col2idx = {}
+            # unique_coltuples = array.array(data_types.ARRAY_FLOAT64)
+            # coltuple_indices = array.array(data_types.ARRAY_INT32, (0,)) * len(me.loops)
+            # for index, coltuple in enumerate(_coltuples_gen(t_lc)):
+            #     tuple_index = col2idx.setdefault(coltuple, next_unique_tuple_index)
+            #     is_new = tuple_index == next_unique_tuple_index
+            #     if is_new:
+            #         unique_coltuples.extend(coltuple)
+            #         next_unique_tuple_index += 1
+            #     coltuple_indices[index] = tuple_index
+
+            # elem_data_single_float64_array(lay_vcol, b"Colors", unique_coltuples)  # Flatten again...
+            # elem_data_single_int32_array(lay_vcol, b"ColorIndex", coltuple_indices)
 
             col2idx = tuple(set(_coltuples_gen(t_lc)))
             elem_data_single_float64_array(lay_vcol, b"Colors", chain(*col2idx))  # Flatten again...
