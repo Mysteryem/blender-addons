@@ -6,6 +6,7 @@
 import array
 import datetime
 import math
+import numpy
 import os
 import time
 
@@ -48,7 +49,7 @@ from .fbx_utils import (
     units_blender_to_fbx_factor, units_convertor, units_convertor_iter,
     matrix4_to_array, similar_values, similar_values_iter,
     # Mesh transform helpers.
-    vcos_transformed_gen, nors_transformed_gen,
+    vcos_transformed_gen, nors_transformed,
     # UUID from key.
     get_fbx_uuid_from_key,
     # Key generators.
@@ -1027,28 +1028,42 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         #     but this does not seem well supported by apps currently...
         me.calc_normals_split()
 
-        t_ln = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.loops) * 3
+        t_ln = numpy.empty(len(me.loops) * 3,  dtype=numpy.single)
         me.loops.foreach_get("normal", t_ln)
-        t_ln = nors_transformed_gen(t_ln, geom_mat_no)
+        t_ln = nors_transformed(t_ln, geom_mat_no)
         if 0:
-            t_ln = tuple(t_ln)  # No choice... :/
-
             lay_nor = elem_data_single_int32(geom, b"LayerElementNormal", 0)
             elem_data_single_int32(lay_nor, b"Version", FBX_GEOMETRY_NORMAL_VERSION)
             elem_data_single_string(lay_nor, b"Name", b"")
             elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_nor, b"ReferenceInformationType", b"IndexToDirect")
 
-            ln2idx = tuple(set(t_ln))
-            elem_data_single_float64_array(lay_nor, b"Normals", chain(*ln2idx))
+            unique_index = 0
+            ln2idx = {}
+
+            export_ln = array.array(data_types.ARRAY_FLOAT64)
+            export_lnidx = array.array(data_types.ARRAY_INT32, (0,)) * len(me.loops)
+            for index, ln in enumerate(t_ln):
+                # ln is an array itself which can't be indexed so can't be used as a dictionary key
+                # convert it to something that can
+                # ln.tobytes() is faster than tuple(ln)
+                existing = ln2idx.setdefault(ln.tobytes(), unique_index)
+                was_added = existing == unique_index
+                if was_added:
+                    export_ln.extend(ln)
+                    unique_index += 1
+                export_lnidx[index] = existing
+
+            elem_data_single_float64_array(lay_nor, b"Normals", export_ln)
             # Normal weights, no idea what it is.
             # t_lnw = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(ln2idx)
             # elem_data_single_float64_array(lay_nor, b"NormalsW", t_lnw)
 
-            ln2idx = {nor: idx for idx, nor in enumerate(ln2idx)}
-            elem_data_single_int32_array(lay_nor, b"NormalsIndex", (ln2idx[n] for n in t_ln))
+            elem_data_single_int32_array(lay_nor, b"NormalsIndex", export_lnidx)
 
             del ln2idx
+            del export_ln
+            del export_lnidx
             # del t_lnw
         else:
             lay_nor = elem_data_single_int32(geom, b"LayerElementNormal", 0)
@@ -1056,7 +1071,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_nor, b"Name", b"")
             elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
-            elem_data_single_float64_array(lay_nor, b"Normals", chain(*t_ln))
+            elem_data_single_float64_array(lay_nor, b"Normals", t_ln.astype(numpy.float64))
             # Normal weights, no idea what it is.
             # t_ln = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.loops)
             # elem_data_single_float64_array(lay_nor, b"NormalsW", t_ln)
@@ -1067,9 +1082,9 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             tspacenumber = len(me.uv_layers)
             if tspacenumber:
                 # We can only compute tspace on tessellated meshes, need to check that here...
-                t_lt = [None] * len(me.polygons)
+                t_lt = numpy.empty(len(me.polygons), dtype=numpy.uintc)
                 me.polygons.foreach_get("loop_total", t_lt)
-                if any((lt > 4 for lt in t_lt)):
+                if (t_lt > 4).any():
                     del t_lt
                     scene_data.settings.report(
                         {'WARNING'},
@@ -1078,7 +1093,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 else:
                     del t_lt
                     num_loops = len(me.loops)
-                    t_ln = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * num_loops * 3
+                    t_ln = numpy.empty(len(me.loops) * 3, dtype=numpy.single)
                     # t_lnw = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.loops)
                     uv_names = [uvlayer.name for uvlayer in me.uv_layers]
                     # Annoying, `me.calc_tangent` errors in case there is no geometry...
@@ -1096,7 +1111,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Binormals",
-                                                       chain(*nors_transformed_gen(t_ln, geom_mat_no)))
+                                                       nors_transformed(t_ln, geom_mat_no).astype(numpy.float64))
                         # Binormal weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"BinormalsW", t_lnw)
 
@@ -1109,7 +1124,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Tangents",
-                                                       chain(*nors_transformed_gen(t_ln, geom_mat_no)))
+                                                       nors_transformed(t_ln, geom_mat_no).astype(numpy.float64))
                         # Tangent weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"TangentsW", t_lnw)
 

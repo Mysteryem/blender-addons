@@ -9,6 +9,7 @@ import time
 from collections import namedtuple
 from collections.abc import Iterable
 from itertools import zip_longest, chain
+import numpy
 
 import bpy
 import bpy_extras
@@ -264,12 +265,17 @@ def vcos_transformed_gen(raw_cos, m=None):
     gen = zip(*(iter(raw_cos),) * 3)
     return gen if m is None else (m @ Vector(v) for v in gen)
 
-def nors_transformed_gen(raw_nors, m=None):
+def nors_transformed(raw_nors, m=None):
     # Great, now normals are also expected 4D!
     # XXX Back to 3D normals for now!
-    # gen = zip(*(iter(raw_nors),) * 3 + (_infinite_gen(1.0),))
-    gen = zip(*(iter(raw_nors),) * 3)
-    return gen if m is None else (m @ Vector(v) for v in gen)
+    # if m is None:
+    #     return numpy.pad(raw_nors.reshape(-1, 3), ((0, 0), (0, 1)), constant_values=1.0)
+    # else:
+    #     return numpy.inner(numpy.pad(raw_nors.reshape(-1, 3), ((0, 0), (0, 1)), constant_values=1.0), m)
+    if m is None:
+        return raw_nors.reshape(-1, 3)
+    else:
+        return numpy.inner(raw_nors.reshape(-1, 3), numpy.array(m.to_3x3(), dtype=numpy.single))
 
 
 # ##### UIDs code. #####

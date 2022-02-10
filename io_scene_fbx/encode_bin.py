@@ -9,6 +9,7 @@ except:
 
 from struct import pack
 import array
+import numpy
 import zlib
 
 _BLOCK_SENTINEL_LENGTH = 13
@@ -112,10 +113,7 @@ class FBXElem:
         self.props_type.append(data_types.STRING)
         self.props.append(data)
 
-    def _add_array_helper(self, data, array_type, prop_type):
-        assert(isinstance(data, array.array))
-        assert(data.typecode == array_type)
-
+    def _add_array_helper(self, data, prop_type):
         length = len(data)
 
         if _IS_BIG_ENDIAN:
@@ -138,35 +136,65 @@ class FBXElem:
         self.props_type.append(prop_type)
         self.props.append(data)
 
+    def _add_parray_helper(self, data, array_type, prop_type):
+        assert (isinstance(data, array.array))
+        assert (data.typecode == array_type)
+
+        self._add_array_helper(data, prop_type)
+
+    def _add_ndarray_helper(self, data, dtype, prop_type):
+        assert(isinstance(data, numpy.ndarray))
+        assert(data.dtype == dtype)
+
+        self._add_array_helper(data, prop_type)
+
     def add_int32_array(self, data):
-        if not isinstance(data, array.array):
-            data = array.array(data_types.ARRAY_INT32, data)
-        self._add_array_helper(data, data_types.ARRAY_INT32, data_types.INT32_ARRAY)
+        if isinstance(data, numpy.ndarray):
+            self._add_ndarray_helper(data, numpy.int32, data_types.INT32_ARRAY)
+        else:
+            if not isinstance(data, array.array):
+                data = array.array(data_types.ARRAY_INT32, data)
+            self._add_parray_helper(data, data_types.ARRAY_INT32, data_types.INT32_ARRAY)
 
     def add_int64_array(self, data):
-        if not isinstance(data, array.array):
-            data = array.array(data_types.ARRAY_INT64, data)
-        self._add_array_helper(data, data_types.ARRAY_INT64, data_types.INT64_ARRAY)
+        if isinstance(data, numpy.ndarray):
+            self._add_ndarray_helper(data, numpy.int64, data_types.INT64_ARRAY)
+        else:
+            if not isinstance(data, array.array):
+                data = array.array(data_types.ARRAY_INT64, data)
+            self._add_parray_helper(data, data_types.ARRAY_INT64, data_types.INT64_ARRAY)
 
     def add_float32_array(self, data):
-        if not isinstance(data, array.array):
-            data = array.array(data_types.ARRAY_FLOAT32, data)
-        self._add_array_helper(data, data_types.ARRAY_FLOAT32, data_types.FLOAT32_ARRAY)
+        if isinstance(data, numpy.ndarray):
+            self._add_ndarray_helper(data, numpy.float32, data_types.FLOAT32_ARRAY)
+        else:
+            if not isinstance(data, array.array):
+                data = array.array(data_types.ARRAY_FLOAT32, data)
+            self._add_parray_helper(data, data_types.ARRAY_FLOAT32, data_types.FLOAT32_ARRAY)
 
     def add_float64_array(self, data):
-        if not isinstance(data, array.array):
-            data = array.array(data_types.ARRAY_FLOAT64, data)
-        self._add_array_helper(data, data_types.ARRAY_FLOAT64, data_types.FLOAT64_ARRAY)
+        if isinstance(data, numpy.ndarray):
+            self._add_ndarray_helper(data, numpy.float64, data_types.FLOAT64_ARRAY)
+        else:
+            if not isinstance(data, array.array):
+                data = array.array(data_types.ARRAY_FLOAT64, data)
+            self._add_parray_helper(data, data_types.ARRAY_FLOAT64, data_types.FLOAT64_ARRAY)
 
     def add_bool_array(self, data):
-        if not isinstance(data, array.array):
-            data = array.array(data_types.ARRAY_BOOL, data)
-        self._add_array_helper(data, data_types.ARRAY_BOOL, data_types.BOOL_ARRAY)
+        if isinstance(data, numpy.ndarray):
+            self._add_ndarray_helper(data, bool, data_types.BOOL_ARRAY)
+        else:
+            if not isinstance(data, array.array):
+                data = array.array(data_types.ARRAY_BOOL, data)
+            self._add_parray_helper(data, data_types.ARRAY_BOOL, data_types.BOOL_ARRAY)
 
     def add_byte_array(self, data):
-        if not isinstance(data, array.array):
-            data = array.array(data_types.ARRAY_BYTE, data)
-        self._add_array_helper(data, data_types.ARRAY_BYTE, data_types.BYTE_ARRAY)
+        if isinstance(data, numpy.ndarray):
+            self._add_ndarray_helper(data, numpy.byte, data_types.BYTE_ARRAY)
+        else:
+            if not isinstance(data, array.array):
+                data = array.array(data_types.ARRAY_BYTE, data)
+            self._add_parray_helper(data, data_types.ARRAY_BYTE, data_types.BYTE_ARRAY)
 
     # -------------------------
     # internal helper functions
