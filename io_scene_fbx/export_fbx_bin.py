@@ -893,18 +893,26 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     #
     # Note we have to process Edges in the same time, as they are based on poly's loops...
     loop_nbr = len(me.loops)
-    t_pvi = array.array(data_types.ARRAY_INT32, (0,)) * loop_nbr
-    t_ls = [None] * len(me.polygons)
+    t_pvi = numpy.empty(loop_nbr, dtype=numpy.uintc)
+    t_ls = numpy.empty(len(me.polygons), dtype=numpy.uintc)
 
     me.loops.foreach_get("vertex_index", t_pvi)
     me.polygons.foreach_get("loop_start", t_ls)
 
     # Add "fake" faces for loose edges.
     if scene_data.settings.use_mesh_edges:
-        t_le = tuple(e.vertices for e in me.edges if e.is_loose)
-        t_pvi.extend(chain(*t_le))
-        t_ls.extend(range(loop_nbr, loop_nbr + len(t_le) * 2, 2))
+        t_loose = numpy.empty(len(me.edges), dtype=bool)
+        me.edges.foreach_get('is_loose', t_loose)
+        t_le = numpy.empty(len(me.edges) * 2, dtype=numpy.uintc)
+        me.edges.foreach_get('vertices', t_le)
+
+        t_loose = numpy.repeat(t_loose, 2)
+
+        t_le = t_le[t_loose]
+        t_pvi = numpy.concatenate((t_pvi, t_le))
+        t_ls = numpy.append(range(loop_nbr, loop_nbr + len(t_le) // 2, 2))
         del t_le
+        del t_loose
 
     # Edges...
     # Note: Edges are represented as a loop here: each edge uses a single index, which refers to the polygon array.
@@ -917,41 +925,58 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     t_eli = array.array(data_types.ARRAY_INT32)
     edges_map = {}
     edges_nbr = 0
-    if t_ls and t_pvi:
-        # t_ls is loop start indices of polygons, but we want to use it to indicate the end loop of each polygon.
-        # The loop end index of a polygon is the loop start index of the next polygon minus one, so the first element of
-        # t_ls will be ignored, and we need to add an extra element at the end to signify the end of the last polygon.
-        # If we were to add another polygon to the mesh, its loop start index would be the next loop index.
-        t_ls = set(t_ls[1:])
-        t_ls.add(loop_nbr)
-        todo_edges = [None] * len(me.edges) * 2
-        # Sigh, cannot access edge.key through foreach_get... :/
-        me.edges.foreach_get("vertices", todo_edges)
-        todo_edges = set((v1, v2) if v1 < v2 else (v2, v1) for v1, v2 in zip(*(iter(todo_edges),) * 2))
+    if t_ls.size and t_pvi.size:
+        # The index of the end of each loop is one before the start of the next loop
+        # The index of the end of the last loop will be the very last index
+        loop_end_indices = numpy.append(t_ls[1:], len(t_pvi)) - 1
 
-        li = 0
-        vi = vi_start = t_pvi[0]
-        for li_next, vi_next in enumerate(t_pvi[1:] + t_pvi[:1], start=1):
-            if li_next in t_ls:  # End of a poly's loop.
-                vi2 = vi_start
-                vi_start = vi_next
-            else:
-                vi2 = vi_next
+        # If it's not the end of a loop, the end of the edge is the previous index
+        edge_ends = numpy.roll(t_pvi, -1)
 
-            e_key = (vi, vi2) if vi < vi2 else (vi2, vi)
-            if e_key in todo_edges:
-                t_eli.append(li)
-                todo_edges.remove(e_key)
-                edges_map[e_key] = edges_nbr
+        # If it is the end of a loop, the end of the edge is the first index of the loop
+        edge_ends[loop_end_indices] = t_pvi[t_ls]
+
+        # Stack into pairs of [edge_start_n, edge_end_n]
+        t_pvi_edge_keys = numpy.column_stack((t_pvi, edge_ends))
+
+        # Sort each [edge_start_n, edge_end_n] pair
+        t_pvi_edge_keys.sort(t_pvi_edge_keys, axis=1)
+
+        # Create arrays with the same typing as the ndarray
+        array_type = numpy.sctype2char(t_pvi_edge_keys.dtype)
+        edge_starts_arr = array.array(array_type)
+        edge_ends_arr = array.array(array_type)
+
+        # From pairs of [...,[edge_start_n, edge_end_n],...] to [[...,edge_start_n,...], [...,edge_end_n,...]]
+        sorted_starts_and_ends = t_pvi_edge_keys.T
+
+        # Much quicker to iterate arrays than ndarrays
+        # tobytes() and then frombytes() seems to be the quickest way to convert from an ndarray to an array
+        edge_starts_arr.frombytes(sorted_starts_and_ends[0].tobytes())
+        edge_ends_arr.frombytes(sorted_starts_and_ends[1].tobytes())
+
+        edge_keys_set = set(me.edge_keys)
+
+        for i, pair in enumerate(zip(edge_starts_arr, edge_ends_arr)):
+            if pair in edge_keys_set:
+                edge_keys_set.remove(pair)
+                edges_map[pair] = edges_nbr
                 edges_nbr += 1
+                t_eli.append(i)
 
-            vi = vi_next
-            li = li_next
-    # End of edges!
+        # t_pvi's dtype is numpy.uintc which could vary in size depending on the compiler, but needs to be written as
+        # a signed 32 bit integer
+        # Use a view where possible instead of making a copy with the new type
+        if t_pvi.dtype.itemsize == numpy.int32.itemsize:
+            t_pvi = t_pvi.view(numpy.int32)
+        else:
+            t_pvi = t_pvi.astype(numpy.int32)
 
-    # We have to ^-1 last index of each loop.
-    for ls in t_ls:
-        t_pvi[ls - 1] ^= -1
+        # ^-1 the last index of each loop
+        t_pvi[loop_end_indices] ^= -1
+    else:
+        # Should be empty, but make sure it's the correct type
+        t_pvi = numpy.empty(0, dtype=numpy.int32)
 
     # And finally we can write data!
     elem_data_single_int32_array(geom, b"PolygonVertexIndex", t_pvi)
