@@ -926,6 +926,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     t_pvi_edge_keys = numpy.empty((0, 2), dtype=t_pvi.dtype)
     edges_map = {}
     edges_nbr = 0
+    # me.edge_keys is recalculated each time we get the attribute, so we'll get it only once, ahead of time
+    edge_keys = me.edge_keys
     if t_ls.size and t_pvi.size:
         # The index of the end of each loop is one before the start of the next loop
         # The index of the end of the last loop will be the very last index
@@ -956,7 +958,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         edge_starts_arr.frombytes(sorted_starts_and_ends[0].tobytes())
         edge_ends_arr.frombytes(sorted_starts_and_ends[1].tobytes())
 
-        edge_keys_set = set(me.edge_keys)
+        edge_keys_set = set(edge_keys)
 
         for i, pair in enumerate(zip(edge_starts_arr, edge_ends_arr)):
             if pair in edge_keys_set:
@@ -1023,10 +1025,10 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # - Get sharp edges from edges marked as sharp
                 e_use_sharp = numpy.empty(len(me.edges), dtype=bool)
                 me.edges.foreach_get('use_edge_sharp', e_use_sharp)
-                # me.edge_keys is a list of tuples. To efficiently read a list of tuples into an array, the array's type
+                # edge_keys is a list of tuples. To efficiently read a list of tuples into an array, the array's type
                 # needs to be tuple-like
                 tuple_like_type = numpy.dtype([('', t_pvi_edge_keys.dtype), ] * 2)
-                edge_keys_np = numpy.fromiter(me.edge_keys, tuple_like_type)
+                edge_keys_np = numpy.fromiter(edge_keys, tuple_like_type)
                 # Get all the edges specifically marked as sharp
                 sharp_edges_from_edge_sharp = edge_keys_np[e_use_sharp]
 
@@ -1045,7 +1047,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # Generator to iterate two elements at a time and zip them up into a tuple
                 sharp_tuple_gen = zip(*(iter(sharp_edges_array),) * 2)
                 # map from tuples to edge indices using edges_map
-                sharp_edge_index_gen = (edges_map[t] for t in sharp_tuple_gen)
+                # Sharp loose edges won't be in edges_map, so need to be filtered out
+                sharp_edge_index_gen = filter(None, map(edges_map.get, sharp_tuple_gen))
                 sharp_indices = numpy.fromiter(sharp_edge_index_gen, dtype=numpy.int32)
 
                 # We found all the sharp edges, so set all edges as smooth to start with.
@@ -1070,13 +1073,26 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
     # Edge crease for subdivision
     if write_crease:
-        t_ec = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * edges_nbr
-        for e in me.edges:
-            if e.key not in edges_map:
-                continue  # Only loose edges, in theory!
+        if edges_map:
+            t_ec_raw = numpy.empty(len(me.edges), dtype=numpy.single)
+            me.edges.foreach_get('crease', t_ec_raw)
+
+            # using -1 to indicate unmapped
+            edge_index_gen = (edges_map.get(t, -1) for t in edge_keys)
+
+            edge_indices = numpy.fromiter(edge_index_gen, dtype=numpy.int32, count=len(t_ec_raw))
+
+            in_map = edge_indices != -1
+
+            t_ec = numpy.empty(edges_nbr, numpy.float64)
+
             # Blender squares those values before sending them to OpenSubdiv, when other software don't,
             # so we need to compensate that to get similar results through FBX...
-            t_ec[edges_map[e.key]] = e.crease * e.crease
+            creases_in_map = t_ec_raw[in_map].astype(numpy.float64)
+
+            t_ec[edge_indices[in_map]] = numpy.square(creases_in_map, out=creases_in_map)
+        else:
+            t_ec = numpy.empty(0, dtype=numpy.float64)
 
         lay_crease = elem_data_single_int32(geom, b"LayerElementEdgeCrease", 0)
         elem_data_single_int32(lay_crease, b"Version", FBX_GEOMETRY_CREASE_VERSION)
