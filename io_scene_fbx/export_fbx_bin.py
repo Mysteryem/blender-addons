@@ -945,22 +945,18 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         # Sort each [edge_start_n, edge_end_n] pair
         t_pvi_edge_keys.sort(t_pvi_edge_keys, axis=1)
 
-        # Create arrays with the same typing as the ndarray
+        # It's much faster to iterate python arrays than ndarrays
+        # Create array with the same typing as the ndarray
         array_type = numpy.sctype2char(t_pvi_edge_keys.dtype)
-        edge_starts_arr = array.array(array_type)
-        edge_ends_arr = array.array(array_type)
+        # Creating the array from bytes seems to be the fastest method
+        pvi_pairs_array = array.array(array_type, t_pvi_edge_keys.tobytes())
 
-        # From pairs of [...,[edge_start_n, edge_end_n],...] to [[...,edge_start_n,...], [...,edge_end_n,...]]
-        sorted_starts_and_ends = t_pvi_edge_keys.T
-
-        # Much quicker to iterate arrays than ndarrays
-        # tobytes() and then frombytes() seems to be the quickest way to convert from an ndarray to an array
-        edge_starts_arr.frombytes(sorted_starts_and_ends[0].tobytes())
-        edge_ends_arr.frombytes(sorted_starts_and_ends[1].tobytes())
+        # zip two elements at a time so iteration gets a tuple
+        pvi_pairs_tuple_gen = zip(*(iter(pvi_pairs_array),) * 2)
 
         edge_keys_set = set(edge_keys)
 
-        for i, pair in enumerate(zip(edge_starts_arr, edge_ends_arr)):
+        for i, pair in enumerate(pvi_pairs_tuple_gen):
             if pair in edge_keys_set:
                 edge_keys_set.remove(pair)
                 edges_map[pair] = edges_nbr
