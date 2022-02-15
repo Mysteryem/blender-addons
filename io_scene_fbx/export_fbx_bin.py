@@ -923,6 +923,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     #       We also have to store a mapping from real edges to their indices in this array, for edge-mapped data
     #       (like e.g. crease).
     t_eli = array.array(data_types.ARRAY_INT32)
+    t_pvi_edge_keys = numpy.empty((0, 2), dtype=t_pvi.dtype)
     edges_map = {}
     edges_nbr = 0
     if t_ls.size and t_pvi.size:
@@ -982,40 +983,81 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     elem_data_single_int32_array(geom, b"PolygonVertexIndex", t_pvi)
     elem_data_single_int32_array(geom, b"Edges", t_eli)
     del t_pvi
-    del t_ls
     del t_eli
 
     # And now, layers!
 
     # Smoothing.
     if smooth_type in {'FACE', 'EDGE'}:
-        t_ps = None
         _map = b""
         if smooth_type == 'FACE':
-            t_ps = array.array(data_types.ARRAY_INT32, (0,)) * len(me.polygons)
+            t_ps = numpy.empty(len(me.polygons), dtype=bool)
             me.polygons.foreach_get("use_smooth", t_ps)
+            t_ps = t_ps.astype(numpy.int32)
             _map = b"ByPolygon"
         else:  # EDGE
-            # Write Edge Smoothing.
-            # Note edge is sharp also if it's used by more than two faces, or one of its faces is flat.
-            t_ps = array.array(data_types.ARRAY_INT32, (0,)) * edges_nbr
-            sharp_edges = set()
-            temp_sharp_edges = {}
-            for p in me.polygons:
-                if not p.use_smooth:
-                    sharp_edges.update(p.edge_keys)
-                    continue
-                for k in p.edge_keys:
-                    if temp_sharp_edges.setdefault(k, 0) > 1:
-                        sharp_edges.add(k)
-                    else:
-                        temp_sharp_edges[k] += 1
-            del temp_sharp_edges
-            for e in me.edges:
-                if e.key not in edges_map:
-                    continue  # Only loose edges, in theory!
-                t_ps[edges_map[e.key]] = not (e.use_edge_sharp or (e.key in sharp_edges))
             _map = b"ByEdge"
+            if edges_map:
+                # Write Edge Smoothing.
+                # Note edge is sharp also if it's used by more than two faces, or one of its faces is flat.
+
+                # - Get sharp edges from flat shaded faces
+                # Get the end of each loop
+                loop_ends = numpy.append(t_ls[1:], len(t_pvi_edge_keys))
+                # t_ls is the start of each loop so the ends minus the starts are the number of sides of each polygon
+                polygon_sides = loop_ends - t_ls
+                # Get the 'use_smooth' attribute of all polygons
+                p_use_smooth = numpy.empty(len(me.polygons), dtype=bool)
+                me.polygons.foreach_get('use_smooth', p_use_smooth)
+                # Invert to get all flat shaded polygons
+                p_flat = numpy.invert(p_use_smooth, out=p_use_smooth)
+                # Duplicate the corresponding element of each polygon according to the number of sides of that polygon
+                p_flat_pvi_indices = numpy.repeat(p_flat, polygon_sides)
+                # Extract all edges belonging to polygons with flat shading
+                sharp_edges_from_polygons = t_pvi_edge_keys[p_flat_pvi_indices]
+
+                # - Get sharp edges from edges used by more than two faces
+                unique_edges, counts = numpy.unique(t_pvi_edge_keys, return_counts=True, axis=0)
+                edges_in_more_than_two_faces = unique_edges[counts > 2]
+
+                # - Get sharp edges from edges marked as sharp
+                e_use_sharp = numpy.empty(len(me.edges), dtype=bool)
+                me.edges.foreach_get('use_edge_sharp', e_use_sharp)
+                # me.edge_keys is a list of tuples. To efficiently read a list of tuples into an array, the array's type
+                # needs to be tuple-like
+                tuple_like_type = numpy.dtype([('', t_pvi_edge_keys.dtype), ] * 2)
+                edge_keys_np = numpy.fromiter(me.edge_keys, tuple_like_type)
+                # Get all the edges specifically marked as sharp
+                sharp_edges_from_edge_sharp = edge_keys_np[e_use_sharp]
+
+                # - Combine all 3 sources of sharp edges
+                # All the concatenated arrays must be the same type, so view the others as the tuple_like_type too.
+                # ravel() is needed to initially view the arrays as flat, otherwise each view will become a 2D array of
+                # tuple_like_types instead of a 1D array like sharp_edges_from_edge_sharp
+                all_sharp_edges = numpy.concatenate((
+                    sharp_edges_from_polygons.ravel().view(tuple_like_type),
+                    edges_in_more_than_two_faces.ravel().view(tuple_like_type),
+                    sharp_edges_from_edge_sharp))
+
+                # - Get the index of each sharp edge from edges_map
+                # Convert to a python array for faster iteration
+                sharp_edges_array = array.array(numpy.sctype2char(t_pvi_edge_keys.dtype), all_sharp_edges.tobytes())
+                # Generator to iterate two elements at a time and zip them up into a tuple
+                sharp_tuple_gen = zip(*(iter(sharp_edges_array),) * 2)
+                # map from tuples to edge indices using edges_map
+                sharp_edge_index_gen = (edges_map[t] for t in sharp_tuple_gen)
+                sharp_indices = numpy.fromiter(sharp_edge_index_gen, dtype=numpy.int32)
+
+                # We found all the sharp edges, so set all edges as smooth to start with.
+                # As the type is int32, True will be represented as 1 and False as 0
+                t_ps = numpy.ones(edges_nbr, dtype=numpy.int32)
+
+                # Set the indices of all sharp edges to zero (False).
+                # There will be some duplicate indices, but it's much slower to use numpy to make the array of indices
+                # or array of sharp edges unique in advance
+                t_ps[sharp_indices] = 0
+            else:
+                t_ps = numpy.empty(0, dtype=numpy.int32)
         lay_smooth = elem_data_single_int32(geom, b"LayerElementSmoothing", 0)
         elem_data_single_int32(lay_smooth, b"Version", FBX_GEOMETRY_SMOOTHING_VERSION)
         elem_data_single_string(lay_smooth, b"Name", b"")
@@ -1023,6 +1065,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         elem_data_single_string(lay_smooth, b"ReferenceInformationType", b"Direct")
         elem_data_single_int32_array(lay_smooth, b"Smoothing", t_ps)  # Sight, int32 for bool...
         del t_ps
+    del t_pvi_edge_keys
+    del t_ls
 
     # Edge crease for subdivision
     if write_crease:
