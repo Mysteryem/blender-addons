@@ -1004,10 +1004,10 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # Note edge is sharp also if it's used by more than two faces, or one of its faces is flat.
 
                 # - Get sharp edges from flat shaded faces
-                # Get the end of each loop
-                loop_ends = numpy.append(t_ls[1:], len(t_pvi_edge_keys))
-                # t_ls is the start of each loop so the ends minus the starts are the number of sides of each polygon
-                polygon_sides = loop_ends - t_ls
+                # Element-wise difference of loop starts appended by the number of polygon vertex indices gets the
+                # number of sides of each polygon
+                # (Alternatively, can be retrieved directly from the 'loop_total' attribute of polygons)
+                polygon_sides = numpy.diff(t_ls, append=len(t_pvi_edge_keys))
                 # Get the 'use_smooth' attribute of all polygons
                 p_use_smooth = numpy.empty(len(me.polygons), dtype=bool)
                 me.polygons.foreach_get('use_smooth', p_use_smooth)
