@@ -47,9 +47,9 @@ from .fbx_utils import (
     # Miscellaneous utils.
     PerfMon,
     units_blender_to_fbx_factor, units_convertor, units_convertor_iter,
-    matrix4_to_array, similar_values, similar_values_iter,
+    matrix4_to_array, similar_values, shape_exclude_similar,
     # Mesh transform helpers.
-    vcos_transformed_gen, nors_transformed,
+    vcos_transformed, nors_transformed,
     # UUID from key.
     get_fbx_uuid_from_key,
     # Key generators.
@@ -759,14 +759,15 @@ def fbx_data_mesh_shapes_elements(root, me_obj, me, scene_data, fbx_me_tmpl, fbx
     for shape, (channel_key, geom_key, shape_verts_co, shape_verts_idx) in shapes.items():
         # Use vgroups as weights, if defined.
         if shape.vertex_group and shape.vertex_group in me_obj.bdata.vertex_groups:
-            shape_verts_weights = [0.0] * (len(shape_verts_co) // 3)
+            shape_verts_weights = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(shape_verts_idx)
             vg_idx = me_obj.bdata.vertex_groups[shape.vertex_group].index
             for sk_idx, v_idx in enumerate(shape_verts_idx):
                 for vg in me.vertices[v_idx].groups:
                     if vg.group == vg_idx:
                         shape_verts_weights[sk_idx] = vg.weight * 100.0
+                        break
         else:
-            shape_verts_weights = [100.0] * (len(shape_verts_co) // 3)
+            shape_verts_weights = array.array(data_types.ARRAY_FLOAT64, (100.0,)) * len(shape_verts_idx)
         channels.append((channel_key, shape, shape_verts_weights))
 
         geom = elem_data_single_int64(root, b"Geometry", get_fbx_uuid_from_key(geom_key))
@@ -782,7 +783,8 @@ def fbx_data_mesh_shapes_elements(root, me_obj, me, scene_data, fbx_me_tmpl, fbx
         elem_data_single_int32_array(geom, b"Indexes", shape_verts_idx)
         elem_data_single_float64_array(geom, b"Vertices", shape_verts_co)
         if write_normals:
-            elem_data_single_float64_array(geom, b"Normals", [0.0] * len(shape_verts_co))
+            elem_data_single_float64_array(geom, b"Normals",
+                                           array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(shape_verts_idx))
 
     # Yiha! BindPose for shapekeys too! Dodecasigh...
     # XXX Not sure yet whether several bindposes on same mesh are allowed, or not... :/
@@ -882,9 +884,9 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     elem_data_single_int32(geom, b"GeometryVersion", FBX_GEOMETRY_VERSION)
 
     # Vertex cos.
-    t_co = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.vertices) * 3
+    t_co = numpy.empty(len(me.vertices) * 3, dtype=numpy.single)
     me.vertices.foreach_get("co", t_co)
-    elem_data_single_float64_array(geom, b"Vertices", chain(*vcos_transformed_gen(t_co, geom_mat_co)))
+    elem_data_single_float64_array(geom, b"Vertices", vcos_transformed(t_co, geom_mat_co))
     del t_co
 
     # Polygon indices.
@@ -2499,35 +2501,29 @@ def fbx_data_from_scene(scene, depsgraph, settings):
 
         shapes_key = get_blender_mesh_shape_key(me)
         # We gather all vcos first, since some skeys may be based on others...
-        _cos = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.vertices) * 3
+        _cos = numpy.empty(len(me.vertices) * 3, dtype=numpy.single)
         me.vertices.foreach_get("co", _cos)
-        v_cos = tuple(vcos_transformed_gen(_cos, geom_mat_co))
+        v_cos = vcos_transformed(_cos, geom_mat_co)
         sk_cos = {}
         for shape in me.shape_keys.key_blocks[1:]:
             shape.data.foreach_get("co", _cos)
-            sk_cos[shape] = tuple(vcos_transformed_gen(_cos, geom_mat_co))
+            sk_cos[shape] = vcos_transformed(_cos, geom_mat_co)
         sk_base = me.shape_keys.key_blocks[0]
 
         for shape in me.shape_keys.key_blocks[1:]:
             # Only write vertices really different from org coordinates!
-            shape_verts_co = []
-            shape_verts_idx = []
-
             sv_cos = sk_cos[shape]
             ref_cos = v_cos if shape.relative_key == sk_base else sk_cos[shape.relative_key]
-            for idx, (sv_co, ref_co) in enumerate(zip(sv_cos, ref_cos)):
-                if similar_values_iter(sv_co, ref_co):
-                    # Note: Maybe this is a bit too simplistic, should we use real shape base here? Though FBX does not
-                    #       have this at all... Anyway, this should cover most common cases imho.
-                    continue
-                shape_verts_co.extend(Vector(sv_co) - Vector(ref_co))
-                shape_verts_idx.append(idx)
 
-            # FBX does not like empty shapes (makes Unity crash e.g.).
-            # To prevent this, we add a vertex that does nothing, but it keeps the shape key intact
-            if not shape_verts_co:
-                shape_verts_co.extend((0, 0, 0))
-                shape_verts_idx.append(0)
+            # Note: Maybe this is a bit too simplistic, should we use real shape base here? Though FBX does not
+            #       have this at all... Anyway, this should cover most common cases imho.
+            shape_verts_co, shape_verts_idx = shape_exclude_similar(sv_cos, ref_cos)
+
+            if not shape_verts_co.size:
+                # FBX does not like empty shapes (makes Unity crash e.g.).
+                # To prevent this, we add a vertex that does nothing, but it keeps the shape key intact
+                shape_verts_co = numpy.array([(0, 0, 0)], dtype=numpy.float64)
+                shape_verts_idx = numpy.array([0], dtype=numpy.int32)
 
             channel_key, geom_key = get_blender_mesh_shape_channel_key(me, shape)
             data = (channel_key, geom_key, shape_verts_co, shape_verts_idx)

@@ -260,22 +260,69 @@ def similar_values_iter(v1, v2, e=1e-6):
             return False
     return True
 
-def vcos_transformed_gen(raw_cos, m=None):
-    # Note: we could most likely get much better performances with numpy, but will leave this as TODO for now.
-    gen = zip(*(iter(raw_cos),) * 3)
-    return gen if m is None else (m @ Vector(v) for v in gen)
+
+def shape_exclude_similar(sv_cos, ref_cos, e=1e-6):
+    """Return vertices in sv_cos not similar to ref_cos and their indices in sv_cos"""
+
+    empty_cos = numpy.empty((0, 3), dtype=sv_cos.dtype)
+    empty_indices = numpy.empty(0, dtype=numpy.int32)
+
+    if sv_cos is ref_cos:
+        return empty_cos, empty_indices
+
+    # Check if the arrays have equal elements in each index
+    equal = numpy.equal(sv_cos, ref_cos)
+    if equal.all():
+        # equal.all() is also True when equal is empty
+        return empty_cos, empty_indices
+
+    # Exclude all that are equal as they will also be considered close
+    # Invert where the arrays are equal and use that to create copies of the input arrays without the equal elements
+    not_equal = numpy.invert(equal, out=equal)
+    not_equal_sv_cos = sv_cos[not_equal]
+    not_equal_ref_cos = ref_cos[not_equal]
+
+    # Note that unlike math.isclose(a,b), numpy.isclose(a,b) is not symmetric and the second argument 'b', is considered
+    # to be the reference value
+    not_equal_but_close = numpy.isclose(not_equal_sv_cos, not_equal_ref_cos, atol=0, rtol=e)
+    not_equal_and_not_close = numpy.invert(not_equal_but_close, out=not_equal_but_close)
+
+    # Update not_equal to be also be False when close, this will be all co x/y/z components which are not similar
+    not_similar = not_equal
+    not_similar[not_equal] = not_equal_and_not_close
+
+    # If a co contains any x, y or z value which is not equal or not close, then the co is considered different
+    different_cos = numpy.any(not_similar, axis=1)
+
+    # Get all the cos in sv_cos that are different from the corresponding cos in ref_cos
+    shape_verts_co = sv_cos[different_cos]
+    (shape_verts_idx, ) = different_cos.nonzero()
+
+    return shape_verts_co, shape_verts_idx.astype(numpy.int32)
+
+
+def vcos_transformed(raw_cos, m=None):
+    if m is None:
+        return raw_cos.astype(numpy.float64).reshape(-1, 3)
+    else:
+        raw_cos_vectors64 = raw_cos.astype(numpy.float64).reshape(-1, 3)
+        return numpy.inner(raw_cos_vectors64, numpy.array(m.to_3x3(), dtype=raw_cos_vectors64.dtype))
+
 
 def nors_transformed(raw_nors, m=None):
     # Great, now normals are also expected 4D!
     # XXX Back to 3D normals for now!
     # if m is None:
-    #     return numpy.pad(raw_nors.reshape(-1, 3), ((0, 0), (0, 1)), constant_values=1.0)
+    #     return numpy.pad(raw_nors.reshape(-1, 3), ((0, 0), (0, 1)), constant_values=1.0).astype(numpy.float64)
     # else:
-    #     return numpy.inner(numpy.pad(raw_nors.reshape(-1, 3), ((0, 0), (0, 1)), constant_values=1.0), m)
+    #     raw_nors_vector64 = numpy.pad(raw_nors.reshape(-1, 3), ((0, 0), (0, 1)), constant_values=1.0)
+    #     raw_nors_vector64 = raw_nors_vector64.astype(numpy.float64)
+    #     return numpy.inner(raw_nors_vector64, numpy.array(m, dtype=raw_nors_vector64.dtype))
     if m is None:
-        return raw_nors.reshape(-1, 3)
+        return raw_nors.reshape(-1, 3).astype(numpy.float64)
     else:
-        return numpy.inner(raw_nors.reshape(-1, 3), numpy.array(m.to_3x3(), dtype=numpy.single))
+        raw_nors_vector64 = raw_nors.reshape(-1, 3).astype(numpy.float64)
+        return numpy.inner(raw_nors_vector64, numpy.array(m.to_3x3(), dtype=raw_nors_vector64.dtype))
 
 
 # ##### UIDs code. #####
