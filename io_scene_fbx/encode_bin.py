@@ -113,14 +113,7 @@ class FBXElem:
         self.props_type.append(data_types.STRING)
         self.props.append(data)
 
-    def _add_array_helper(self, data, prop_type):
-        length = len(data)
-
-        if _IS_BIG_ENDIAN:
-            data = data[:]
-            data.byteswap()
-        data = data.tobytes()
-
+    def _add_array_helper(self, data, prop_type, length):
         # mimic behavior of fbxconverter (also common sense)
         # we could make this configurable.
         encoding = 0 if len(data) <= 128 else 1
@@ -140,13 +133,26 @@ class FBXElem:
         assert (isinstance(data, array.array))
         assert (data.typecode == array_type)
 
-        self._add_array_helper(data, prop_type)
+        length = len(data)
+
+        if _IS_BIG_ENDIAN:
+            data = data[:]
+            data.byteswap()
+        data = data.tobytes()
+
+        self._add_array_helper(data, prop_type, length)
 
     def _add_ndarray_helper(self, data, dtype, prop_type):
         assert(isinstance(data, numpy.ndarray))
         assert(data.dtype == dtype)
 
-        self._add_array_helper(data, prop_type)
+        length = data.size
+
+        if _IS_BIG_ENDIAN and data.dtype.isnative:
+            data = data.byteswap()
+        data = data.tobytes()
+
+        self._add_array_helper(data, prop_type, length)
 
     def add_int32_array(self, data):
         if isinstance(data, numpy.ndarray):
