@@ -885,7 +885,12 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
     # Vertex cos.
     t_co = numpy.empty(len(me.vertices) * 3, dtype=numpy.single)
-    me.vertices.foreach_get("co", t_co)
+    # When a mesh has shape keys, the reference shape key and the vertices of the mesh can become desynchronized. The
+    # reference shape key is what users see within Blender, so export the vertex cos based on the reference shape key.
+    if me.shape_keys:
+        me.shape_keys.reference_key.data.foreach_get("co", t_co)
+    else:
+        me.vertices.foreach_get("co", t_co)
     elem_data_single_float64_array(geom, b"Vertices", vcos_transformed(t_co, geom_mat_co).astype(numpy.float64))
     del t_co
 
@@ -2512,18 +2517,15 @@ def fbx_data_from_scene(scene, depsgraph, settings):
         shapes_key = get_blender_mesh_shape_key(me)
         # We gather all vcos first, since some skeys may be based on others...
         _cos = numpy.empty(len(me.vertices) * 3, dtype=numpy.single)
-        me.vertices.foreach_get("co", _cos)
-        v_cos = vcos_transformed(_cos, geom_mat_co)
         sk_cos = {}
-        for shape in me.shape_keys.key_blocks[1:]:
+        for shape in me.shape_keys.key_blocks:
             shape.data.foreach_get("co", _cos)
             sk_cos[shape] = vcos_transformed(_cos, geom_mat_co)
-        sk_base = me.shape_keys.key_blocks[0]
 
         for shape in me.shape_keys.key_blocks[1:]:
             # Only write vertices really different from org coordinates!
             sv_cos = sk_cos[shape]
-            ref_cos = v_cos if shape.relative_key == sk_base else sk_cos[shape.relative_key]
+            ref_cos = sk_cos[shape.relative_key]
 
             # Note: Maybe this is a bit too simplistic, should we use real shape base here? Though FBX does not
             #       have this at all... Anyway, this should cover most common cases imho.
