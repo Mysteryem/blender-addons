@@ -886,7 +886,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     # Vertex cos.
     t_co = numpy.empty(len(me.vertices) * 3, dtype=numpy.single)
     me.vertices.foreach_get("co", t_co)
-    elem_data_single_float64_array(geom, b"Vertices", vcos_transformed(t_co, geom_mat_co))
+    elem_data_single_float64_array(geom, b"Vertices", vcos_transformed(t_co, geom_mat_co).astype(numpy.float64))
     del t_co
 
     # Polygon indices.
@@ -2528,6 +2528,7 @@ def fbx_data_from_scene(scene, depsgraph, settings):
             # Note: Maybe this is a bit too simplistic, should we use real shape base here? Though FBX does not
             #       have this at all... Anyway, this should cover most common cases imho.
             shape_verts_co, shape_verts_idx = shape_exclude_similar(sv_cos, ref_cos)
+            shape_verts_co = shape_verts_co.astype(numpy.float64)
 
             if not shape_verts_co.size:
                 # FBX does not like empty shapes (makes Unity crash e.g.).

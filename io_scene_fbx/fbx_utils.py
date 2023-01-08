@@ -301,28 +301,75 @@ def shape_exclude_similar(sv_cos, ref_cos, e=1e-6):
     return shape_verts_co, shape_verts_idx.astype(numpy.int32)
 
 
-def vcos_transformed(raw_cos, m=None):
-    if m is None:
-        return raw_cos.astype(numpy.float64).reshape(-1, 3)
+def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
+    """Multiply a 4d matrix by each 3d vector in an array and return as an array of either 3d or 4d vectors"""
+    if mat4 is None:
+        if return_4d:
+            index_to_insert_before = 3
+            value_to_insert = 1.0
+            return numpy.insert(vec3_array.reshape(-1, 3), index_to_insert_before, value_to_insert, axis=1)
+        else:
+            return vec3_array.reshape(-1, 3)
     else:
-        raw_cos_vectors64 = raw_cos.astype(numpy.float64).reshape(-1, 3)
-        return numpy.inner(raw_cos_vectors64, numpy.array(m.to_3x3(), dtype=raw_cos_vectors64.dtype))
+        vec3_array = vec3_array.reshape(-1, 3)
+        # Multiplying a 4d mathutils.Matrix by a 3d mathutils.Vector implicitly extends the Vector to 4d by appending
+        # 1.0 to the Vector and then the 4d result is truncated back to 3d.
+        # Numpy does not do this implicitly, so it must be done manually.
+
+        # Get a copy of raw_nors_vector64, but with 1.0 inserted at the end of each vector
+        index_to_insert_before = 3
+        value_to_insert = 1.0
+        vec4_array = numpy.insert(vec3_array, index_to_insert_before, value_to_insert, axis=1)
+
+        # Convert the matrix to numpy
+        mat4_np = numpy.array(mat4, dtype=vec3_array.dtype)
+
+        # Currently, the arrangement of the vectors and the matrix cannot be multiplied, one of them must be transposed
+        # ┌a, b, c, d┐   ┌x1, y1, z1, 1┐
+        # │e, f, g, h│ ? │x2, y2, z2, 1│
+        # │i, j, k, l│   │x3, y3, z3, 1│
+        # └m, n, o, p┘   │x4, y4, z4, 1│
+        #                ┊ …,  …,  …, …┊
+        #                └xn, yn, zn, 1┘
+        # Can transpose vec4_array which gives a result with the shape (4, len(vec4_array)):
+        # ┌a, b, c, d┐   ┌x1, x2, x3, x4, …, xn┐
+        # │e, f, g, h│ @ │y1, y2, y3, y4, …, yn│
+        # │i, j, k, l│   │z1, z2, z3, z4, …, zn│
+        # └m, n, o, p┘   └ 1,  1,  1,  1, …,  1┘
+        # Or transpose the matrix and swap the order of multiplication which gives a result with shape
+        # (len(vec4_array), 4)):
+        # ┌x1, y1, z1, 1┐   ┌a, e, i, m┐
+        # │x2, y2, z2, 1│   │b, f, j, n│
+        # │x3, y3, z3, 1│ @ │c, g, k, o│
+        # │x4, y4, z4, 1│   └d, h, l, p┘
+        # ┊ …,  …,  …, …┊
+        # └xn, yn, zn, 1┘
+
+        # After multiplication, the result must then be reduced back to 3d.
+        # There's no, or negligible, performance difference between the two options.
+
+        # First option:
+        # result_4d_T = (mat4_np @ vec4_array.T)
+        # result_4d = result_4d_T
+        # Second option:
+        result_4d = (vec4_array @ mat4_np.T)
+
+        if return_4d:
+            return result_4d
+        else:
+            # Return a view that excludes the fourth dimension of each vector
+            return result_4d[:, :3]
+
+
+def vcos_transformed(raw_cos, m=None):
+    return _mat4_vec3_array_multiply(m, raw_cos)
 
 
 def nors_transformed(raw_nors, m=None):
     # Great, now normals are also expected 4D!
     # XXX Back to 3D normals for now!
-    # if m is None:
-    #     return numpy.pad(raw_nors.reshape(-1, 3), ((0, 0), (0, 1)), constant_values=1.0).astype(numpy.float64)
-    # else:
-    #     raw_nors_vector64 = numpy.pad(raw_nors.reshape(-1, 3), ((0, 0), (0, 1)), constant_values=1.0)
-    #     raw_nors_vector64 = raw_nors_vector64.astype(numpy.float64)
-    #     return numpy.inner(raw_nors_vector64, numpy.array(m, dtype=raw_nors_vector64.dtype))
-    if m is None:
-        return raw_nors.reshape(-1, 3).astype(numpy.float64)
-    else:
-        raw_nors_vector64 = raw_nors.reshape(-1, 3).astype(numpy.float64)
-        return numpy.inner(raw_nors_vector64, numpy.array(m.to_3x3(), dtype=raw_nors_vector64.dtype))
+    # return _mat4_vec3_array_multiply(m, raw_nors, return_4d=True)
+    return _mat4_vec3_array_multiply(m, raw_nors)
 
 
 # ##### UIDs code. #####
