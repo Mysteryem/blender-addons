@@ -949,7 +949,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         t_pvi_edge_keys = numpy.column_stack((t_pvi, edge_ends))
 
         # Sort each [edge_start_n, edge_end_n] pair
-        t_pvi_edge_keys.sort(t_pvi_edge_keys, axis=1)
+        t_pvi_edge_keys.sort(axis=1)
 
         # It's much faster to iterate python arrays than ndarrays
         # Create array with the same typing as the ndarray
