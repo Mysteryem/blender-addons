@@ -917,7 +917,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
         t_le = t_le[t_loose]
         t_pvi = numpy.concatenate((t_pvi, t_le))
-        t_ls = numpy.append(range(loop_nbr, loop_nbr + len(t_le) // 2, 2))
+        t_ls = numpy.append(t_ls, range(loop_nbr, loop_nbr + len(t_le) // 2, 2))
         del t_le
         del t_loose
 
