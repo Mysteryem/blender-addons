@@ -963,7 +963,6 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     t_pvi_edge_indices = numpy.empty(0, dtype=t_lei.dtype)
     """Edge index of each t_pvi_edge_key, used to map per-edge data to t_pvi"""
 
-    t_pvi_edge_keys_counts = numpy.empty(0, dtype=numpy.int64)
     """The number of times each pvi edge key was found, equals the number of polygons each edge key is in"""
     if t_ls.size and t_pvi.size:
         # The index of the end of each loop is one before the start of the next loop
@@ -983,21 +982,13 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         # shouldn't normally happen), only the first edge found in loops will be exported along with its crease/sharp
         # To export separate edges that share the same vertices, .unique can be run with t_lei as the first argument and
         # without the axis argument, finding unique edges rather than unique edge keys.
-        unique_edges_map_keys_sorted, indices_of_first_found, inverse, counts = (
-            numpy.unique(t_pvi_edge_keys, return_index=True, return_inverse=True, return_counts=True, axis=0))
+        unique_edges_map_keys_sorted, indices_of_first_found = (
+            numpy.unique(t_pvi_edge_keys, return_index=True, axis=0))
 
         # Indices of the elements in t_pvi_edge_keys that produce unique_edges_map_keys_sorted but in the original order
         unique_edge_key_loop_indices = numpy.sort(indices_of_first_found)
-        # Indices of the elements in unique_edges_map_keys_sorted that produce unique_edges_map_keys_sorted but in the
-        # original order
-
-        # counts in the original order of t_pvi_edge_keys, equals the number of polygons each edge key is in
-        t_pvi_edge_keys_counts = counts[inverse][unique_edge_key_loop_indices]
 
         t_eli = unique_edge_key_loop_indices
-
-        # unique_t_pvi_edge_keys_orig_order = t_pvi_edge_keys[unique_edge_key_loop_indices]
-        # unique_t_pvi_edge_keys_orig_order = unique_edges_map_keys_sorted[numpy.argsort(unique_edge_key_loop_indices)]
 
         # Edge index of each element in unique t_pvi_edge_keys, used to map per-edge data such as sharp and creases
         t_pvi_edge_indices = t_lei[t_eli]
@@ -1048,6 +1039,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             if t_pvi_edge_indices.size:
                 # Write Edge Smoothing.
                 # Note edge is sharp also if it's used by more than two faces, or one of its faces is flat.
+                mesh_edge_nbr = len(me.edges)
 
                 # - Get sharp edges from flat shaded faces
                 # Element-wise difference of loop starts appended by the number of loops gets the number of sides of
@@ -1071,12 +1063,15 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # sharp_edge_indices_from_polygons multiple times
                 sharp_edge_indices_from_polygons = t_lei[:mesh_loop_nbr][p_flat_loop_indices_mask]
 
-                # - Get sharp edges from edges used by more than two faces
-                sharp_edge_keys_from_more_than_two_faces = t_pvi_edge_keys_counts > 2
-
                 # - Get sharp edges from edges marked as sharp
-                e_use_sharp = numpy.empty(len(me.edges), dtype=bool)
+                e_use_sharp = numpy.empty(mesh_edge_nbr, dtype=bool)
                 me.edges.foreach_get('use_edge_sharp', e_use_sharp)
+
+                # - Get sharp edges from edges used by more than two loops (and thus more than two faces)
+                sharp_edges_from_more_than_two_faces = numpy.bincount(t_lei, minlength=mesh_edge_nbr) > 2
+
+                # - Combine with edges that are sharp because they're in more than two faces
+                e_use_sharp = numpy.logical_or(e_use_sharp, sharp_edges_from_more_than_two_faces, out=e_use_sharp)
 
                 # - Combine with edges that are sharp because a polygon they're in has flat shading
                 e_use_sharp[sharp_edge_indices_from_polygons] = True
@@ -1084,16 +1079,11 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # - Convert sharp edges to sharp edge keys (t_pvi)
                 ek_use_sharp = e_use_sharp[t_pvi_edge_indices]
 
-                # - Combine with edge keys used by more than two faces
-                ek_use_sharp = numpy.logical_or(ek_use_sharp, sharp_edge_keys_from_more_than_two_faces,
-                                                out=ek_use_sharp)
-
                 # - Sharp edges are indicated in FBX as zero (False)
-                # Invert and convert to int32
+                # Invert and convert to int32 to match the exported type
                 t_ps = numpy.invert(ek_use_sharp, out=ek_use_sharp).astype(numpy.int32)
                 del ek_use_sharp
                 del e_use_sharp
-                del sharp_edge_keys_from_more_than_two_faces
                 del sharp_edge_indices_from_polygons
                 del p_flat_loop_indices_mask
                 del p_flat
