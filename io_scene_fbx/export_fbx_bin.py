@@ -2538,9 +2538,9 @@ def fbx_data_from_scene(scene, depsgraph, settings):
 
         shapes_key = get_blender_mesh_shape_key(me)
         # We gather all vcos first, since some skeys may be based on others...
-        _cos = numpy.empty(len(me.vertices) * 3, dtype=numpy.single)
         sk_cos = {}
         for shape in me.shape_keys.key_blocks:
+            _cos = numpy.empty(len(me.vertices) * 3, dtype=numpy.single)
             shape.data.foreach_get("co", _cos)
             sk_cos[shape] = vcos_transformed(_cos, geom_mat_co)
 

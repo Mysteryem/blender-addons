@@ -302,7 +302,8 @@ def shape_exclude_similar(sv_cos, ref_cos, e=1e-6):
 
 
 def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
-    """Multiply a 4d matrix by each 3d vector in an array and return as an array of either 3d or 4d vectors"""
+    """Multiply a 4d matrix by each 3d vector in an array and return as an array of either 3d or 4d vectors.
+    Returns a view of the input array if no multiplication or increase in dimensions is required."""
     if mat4 is None:
         if return_4d:
             index_to_insert_before = 3
