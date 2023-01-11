@@ -10,8 +10,6 @@ from collections import namedtuple
 from collections.abc import Iterable
 from itertools import zip_longest, chain
 import numpy
-from functools import cached_property
-from dataclasses import dataclass
 
 import bpy
 import bpy_extras
@@ -372,35 +370,6 @@ def nors_transformed(raw_nors, m=None):
     # XXX Back to 3D normals for now!
     # return _mat4_vec3_array_multiply(m, raw_nors, return_4d=True)
     return _mat4_vec3_array_multiply(m, raw_nors)
-
-
-@dataclass
-class EdgeKeysCache:
-    VERTEX_INDEX_DTYPE = numpy.uintc
-    TUPLE_EDGE_KEY_DTYPE = numpy.dtype([('', VERTEX_INDEX_DTYPE)] * 2)
-    """Custom dtype of two numpy.uintc fields that is converted to a tuple by numpy.ndarray.tolist()"""
-
-    mesh: bpy.types.Mesh
-
-    @cached_property
-    def edge_keys_np(self):
-        """Get edge keys as a flat numpy array"""
-        edges = self.mesh.edges
-        # MeshEdge.vertices is a bpy_prop_array of uintc type, which gets flattened when we get it with foreach_get
-        edge_vertices = numpy.empty(len(edges) * 2, dtype=EdgeKeysCache.VERTEX_INDEX_DTYPE)
-        edges.foreach_get('vertices', edge_vertices)
-        # Edge keys are sorted such that the first index is the smaller of the two
-        # View the edge_vertices as pairs of elements
-        pair_view = edge_vertices.view()
-        pair_view.shape = (-1, 2)
-        # Sort the elements in each pair
-        pair_view.sort(axis=1)
-        return edge_vertices
-
-    @cached_property
-    def edge_keys(self):
-        """~6 times faster access for Mesh.edge_keys, which is a property implemented Python in bpy_types.Mesh"""
-        return self.edge_keys_np.view(EdgeKeysCache.TUPLE_EDGE_KEY_DTYPE).tolist()
 
 
 # ##### UIDs code. #####
