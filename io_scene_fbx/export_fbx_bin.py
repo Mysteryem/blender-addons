@@ -47,7 +47,7 @@ from .fbx_utils import (
     # Miscellaneous utils.
     PerfMon,
     units_blender_to_fbx_factor, units_convertor, units_convertor_iter,
-    matrix4_to_array, similar_values, shape_exclude_similar, EdgeKeysCache,
+    matrix4_to_array, similar_values, shape_exclude_similar,
     # Mesh transform helpers.
     vcos_transformed, nors_transformed,
     # UUID from key.
@@ -900,26 +900,56 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     #
     # Note we have to process Edges in the same time, as they are based on poly's loops...
     loop_nbr = len(me.loops)
-    t_pvi = numpy.empty(loop_nbr, dtype=numpy.uintc)
-    t_ls = numpy.empty(len(me.polygons), dtype=numpy.uintc)
+    mesh_loop_nbr = loop_nbr
+    """The original number of loops, prior to adding any extra loops for loose edges"""
+    mesh_poly_nbr = len(me.polygons)
+    """The original number of polygons, prior to adding any extra polygons for loose edges"""
+
+    # dtypes matching the internal C data
+    vertex_index_dtype = edge_index_dtype = loop_index_dtype = numpy.uintc
+
+    t_pvi = numpy.empty(loop_nbr, dtype=vertex_index_dtype)
+    """Start vertex indices of loops"""
+    t_ls = numpy.empty(len(me.polygons), dtype=loop_index_dtype)
+    """Loop start indices of polygons"""
+    t_ev = numpy.empty(len(me.edges) * 2, dtype=vertex_index_dtype)
+    """Vertex indices of edges (unsorted, unlike Mesh.edge_keys), flattened into an array twice the length of the number
+    of edges"""
+    t_lei = numpy.empty(loop_nbr, dtype=edge_index_dtype)
+    """Edge indices of loops"""
 
     me.loops.foreach_get("vertex_index", t_pvi)
     me.polygons.foreach_get("loop_start", t_ls)
+    me.edges.foreach_get("vertices", t_ev)
+    me.loops.foreach_get("edge_index", t_lei)
 
-    # Add "fake" faces for loose edges.
+    # Add "fake" faces for loose edges. Each "fake" face consists of two loops.
     if scene_data.settings.use_mesh_edges:
+        # Get the mask of edges that are loose
         t_loose = numpy.empty(len(me.edges), dtype=bool)
         me.edges.foreach_get('is_loose', t_loose)
-        t_le = numpy.empty(len(me.edges) * 2, dtype=numpy.uintc)
-        me.edges.foreach_get('vertices', t_le)
 
-        t_loose = numpy.repeat(t_loose, 2)
+        indices_of_loose_edges = numpy.flatnonzero(t_loose)
+        # Since we add two loops per loose edge, repeat the indices so that there's one for each new loop
+        new_loop_edge_indices = numpy.repeat(indices_of_loose_edges, 2)
 
-        t_le = t_le[t_loose]
-        t_pvi = numpy.concatenate((t_pvi, t_le))
-        t_ls = numpy.append(t_ls, range(loop_nbr, loop_nbr + len(t_le), 2))
+        # View the edge vertex indices as pairs, since there are two per edge and the mask is per edge
+        t_ev_pair_view = t_ev
+        t_ev_pair_view.shape = (-1, 2)
+        # Get the loose edge vertex index pairs
+        t_le = t_ev_pair_view[t_loose]
+
+        # append will automatically flatten the pairs in t_le
+        t_pvi = numpy.append(t_pvi, t_le)
+        t_lei = numpy.append(t_lei, new_loop_edge_indices)
+        # Two loops are added per loose edge
+        loop_nbr += 2 * len(t_le)
+        t_ls = numpy.append(t_ls, numpy.arange(mesh_loop_nbr, loop_nbr, 2, dtype=t_ls.dtype))
         del t_le
         del t_loose
+        del t_ev_pair_view
+        del indices_of_loose_edges
+        del new_loop_edge_indices
 
     # Edges...
     # Note: Edges are represented as a loop here: each edge uses a single index, which refers to the polygon array.
@@ -929,45 +959,53 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     #                 for loose edges).
     #       We also have to store a mapping from real edges to their indices in this array, for edge-mapped data
     #       (like e.g. crease).
-    t_eli = array.array(data_types.ARRAY_INT32)
-    t_pvi_edge_keys = numpy.empty((0, 2), dtype=t_pvi.dtype)
-    edges_map = {}
-    edges_nbr = 0
-    edge_keys_cache = EdgeKeysCache(me)
+    t_eli = numpy.empty(0, dtype=numpy.int32)
+    t_pvi_edge_indices = numpy.empty(0, dtype=t_lei.dtype)
+    """Edge index of each t_pvi_edge_key, used to map per-edge data to t_pvi"""
+
+    t_pvi_edge_keys_counts = numpy.empty(0, dtype=numpy.int64)
+    """The number of times each pvi edge key was found, equals the number of polygons each edge key is in"""
     if t_ls.size and t_pvi.size:
         # The index of the end of each loop is one before the start of the next loop
         # The index of the end of the last loop will be the very last index
         loop_end_indices = numpy.append(t_ls[1:], len(t_pvi)) - 1
 
-        # If it's not the end of a loop, the end of the edge is the previous index
-        edge_ends = numpy.roll(t_pvi, -1)
+        # Get unsorted edge keys by indexing the edge->vertex-indices array by the loop->edge-index array
+        # View the edge vertices array as pairs since there are two per edge
+        t_ev_pair_view = t_ev.view()
+        t_ev_pair_view.shape = (-1, 2)
+        t_pvi_edge_keys = t_ev_pair_view[t_lei]
 
-        # If it is the end of a loop, the end of the edge is the first index of the loop
-        edge_ends[loop_end_indices] = t_pvi[t_ls]
-
-        # Stack into pairs of [edge_start_n, edge_end_n]
-        t_pvi_edge_keys = numpy.column_stack((t_pvi, edge_ends))
-
-        # Sort each [edge_start_n, edge_end_n] pair
+        # Sort each [edge_start_n, edge_end_n] pair to get edge keys
         t_pvi_edge_keys.sort(axis=1)
 
-        # It's much faster to iterate python arrays than ndarrays
-        # Create array with the same typing as the ndarray
-        array_type = numpy.sctype2char(t_pvi_edge_keys.dtype)
-        # Creating the array from bytes seems to be the fastest method
-        pvi_pairs_array = array.array(array_type, t_pvi_edge_keys.tobytes())
+        # Since we're finding unique edge keys, if there are multiple edges that share the same vertices (which
+        # shouldn't normally happen), only the first edge found in loops will be exported along with its crease/sharp
+        # To export separate edges that share the same vertices, .unique can be run with t_lei as the first argument and
+        # without the axis argument, finding unique edges rather than unique edge keys.
+        unique_edges_map_keys_sorted, indices_of_first_found, inverse, counts = (
+            numpy.unique(t_pvi_edge_keys, return_index=True, return_inverse=True, return_counts=True, axis=0))
 
-        # zip two elements at a time so iteration gets a tuple
-        pvi_pairs_tuple_gen = zip(*(iter(pvi_pairs_array),) * 2)
+        # Indices of the elements in t_pvi_edge_keys that produce unique_edges_map_keys_sorted but in the original order
+        unique_edge_key_loop_indices = numpy.sort(indices_of_first_found)
+        # Indices of the elements in unique_edges_map_keys_sorted that produce unique_edges_map_keys_sorted but in the
+        # original order
 
-        edge_keys_set = set(edge_keys_cache.edge_keys)
+        # counts in the original order of t_pvi_edge_keys, equals the number of polygons each edge key is in
+        t_pvi_edge_keys_counts = counts[inverse][unique_edge_key_loop_indices]
 
-        for i, pair in enumerate(pvi_pairs_tuple_gen):
-            if pair in edge_keys_set:
-                edge_keys_set.remove(pair)
-                edges_map[pair] = edges_nbr
-                edges_nbr += 1
-                t_eli.append(i)
+        t_eli = unique_edge_key_loop_indices
+
+        # unique_t_pvi_edge_keys_orig_order = t_pvi_edge_keys[unique_edge_key_loop_indices]
+        # unique_t_pvi_edge_keys_orig_order = unique_edges_map_keys_sorted[numpy.argsort(unique_edge_key_loop_indices)]
+
+        # Edge index of each element in unique t_pvi_edge_keys, used to map per-edge data such as sharp and creases
+        t_pvi_edge_indices = t_lei[t_eli]
+
+        if t_eli.dtype.itemsize == numpy.int32.itemsize:
+            t_eli = t_eli.view(numpy.int32)
+        else:
+            t_eli = t_eli.astype(numpy.int32)
 
         # t_pvi's dtype is numpy.uintc which could vary in size depending on the compiler, but needs to be written as
         # a signed 32 bit integer
@@ -979,6 +1017,11 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
         # ^-1 the last index of each loop
         t_pvi[loop_end_indices] ^= -1
+        del t_pvi_edge_keys
+        del unique_edge_key_loop_indices
+        del unique_edges_map_keys_sorted
+        del t_ev_pair_view
+        del loop_end_indices
     else:
         # Should be empty, but make sure it's the correct type
         t_pvi = numpy.empty(0, dtype=numpy.int32)
@@ -988,6 +1031,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     elem_data_single_int32_array(geom, b"Edges", t_eli)
     del t_pvi
     del t_eli
+    del t_ev
 
     # And now, layers!
 
@@ -995,67 +1039,66 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     if smooth_type in {'FACE', 'EDGE'}:
         _map = b""
         if smooth_type == 'FACE':
-            t_ps = numpy.empty(len(me.polygons), dtype=bool)
+            t_ps = numpy.empty(mesh_poly_nbr, dtype=bool)
             me.polygons.foreach_get("use_smooth", t_ps)
             t_ps = t_ps.astype(numpy.int32)
             _map = b"ByPolygon"
         else:  # EDGE
             _map = b"ByEdge"
-            if edges_map:
+            if t_pvi_edge_indices.size:
                 # Write Edge Smoothing.
                 # Note edge is sharp also if it's used by more than two faces, or one of its faces is flat.
 
                 # - Get sharp edges from flat shaded faces
-                # Element-wise difference of loop starts appended by the number of polygon vertex indices gets the
-                # number of sides of each polygon
+                # Element-wise difference of loop starts appended by the number of loops gets the number of sides of
+                # each polygon
                 # (Alternatively, can be retrieved directly from the 'loop_total' attribute of polygons)
-                polygon_sides = numpy.diff(t_ls, append=len(t_pvi_edge_keys))
+                # Only get the first mesh_poly_nbr loop_start indices, because we might have added extra polygons for
+                # loose edges that don't exist in the mesh itself
+                polygon_sides = numpy.diff(t_ls[:mesh_poly_nbr], append=mesh_loop_nbr)
                 # Get the 'use_smooth' attribute of all polygons
-                p_use_smooth = numpy.empty(len(me.polygons), dtype=bool)
+                p_use_smooth = numpy.empty(mesh_poly_nbr, dtype=bool)
                 me.polygons.foreach_get('use_smooth', p_use_smooth)
                 # Invert to get all flat shaded polygons
                 p_flat = numpy.invert(p_use_smooth, out=p_use_smooth)
                 # Duplicate the corresponding element of each polygon according to the number of sides of that polygon
-                p_flat_pvi_indices = numpy.repeat(p_flat, polygon_sides)
+                # to get a mask of flat loop indices
+                p_flat_loop_indices_mask = numpy.repeat(p_flat, polygon_sides)
                 # Extract all edges belonging to polygons with flat shading
-                sharp_edges_from_polygons = t_pvi_edge_keys[p_flat_pvi_indices]
+                # Because t_lei could have edge indices for extra loops added for loose edges, only get the first
+                # mesh_loop_nbr edge indices
+                # Note that if an edge is in multiple loops that are part of flat shaded faces, its index will end up in
+                # sharp_edge_indices_from_polygons multiple times
+                sharp_edge_indices_from_polygons = t_lei[:mesh_loop_nbr][p_flat_loop_indices_mask]
 
                 # - Get sharp edges from edges used by more than two faces
-                unique_edges, counts = numpy.unique(t_pvi_edge_keys, return_counts=True, axis=0)
-                edges_in_more_than_two_faces = unique_edges[counts > 2]
+                sharp_edge_keys_from_more_than_two_faces = t_pvi_edge_keys_counts > 2
 
                 # - Get sharp edges from edges marked as sharp
                 e_use_sharp = numpy.empty(len(me.edges), dtype=bool)
                 me.edges.foreach_get('use_edge_sharp', e_use_sharp)
-                edge_keys_np = edge_keys_cache.edge_keys_np.view()
-                edge_keys_np.shape = (-1, 2)
-                # Get all the edge keys specifically marked as sharp
-                sharp_edges_from_edge_sharp = edge_keys_np[e_use_sharp]
 
-                # - Combine all 3 sources of sharp edges
-                all_sharp_edges = numpy.concatenate((
-                    sharp_edges_from_polygons,
-                    edges_in_more_than_two_faces,
-                    sharp_edges_from_edge_sharp))
+                # - Combine with edges that are sharp because a polygon they're in has flat shading
+                e_use_sharp[sharp_edge_indices_from_polygons] = True
 
-                # - Get the index of each sharp edge from edges_map
-                # Convert to a python array for faster iteration
-                sharp_edges_array = array.array(numpy.sctype2char(t_pvi_edge_keys.dtype), all_sharp_edges.tobytes())
-                # Generator to iterate two elements at a time and zip them up into a tuple
-                sharp_tuple_gen = zip(*(iter(sharp_edges_array),) * 2)
-                # map from tuples to edge indices using edges_map
-                # Sharp loose edges won't be in edges_map, so need to be filtered out
-                sharp_edge_index_gen = filter(None, map(edges_map.get, sharp_tuple_gen))
-                sharp_indices = numpy.fromiter(sharp_edge_index_gen, dtype=numpy.int32)
+                # - Convert sharp edges to sharp edge keys (t_pvi)
+                ek_use_sharp = e_use_sharp[t_pvi_edge_indices]
 
-                # We found all the sharp edges, so set all edges as smooth to start with.
-                # As the type is int32, True will be represented as 1 and False as 0
-                t_ps = numpy.ones(edges_nbr, dtype=numpy.int32)
+                # - Combine with edge keys used by more than two faces
+                ek_use_sharp = numpy.logical_or(ek_use_sharp, sharp_edge_keys_from_more_than_two_faces,
+                                                out=ek_use_sharp)
 
-                # Set the indices of all sharp edges to zero (False).
-                # There will be some duplicate indices, but it's much slower to use numpy to make the array of indices
-                # or array of sharp edges unique in advance
-                t_ps[sharp_indices] = 0
+                # - Sharp edges are indicated in FBX as zero (False)
+                # Invert and convert to int32
+                t_ps = numpy.invert(ek_use_sharp, out=ek_use_sharp).astype(numpy.int32)
+                del ek_use_sharp
+                del e_use_sharp
+                del sharp_edge_keys_from_more_than_two_faces
+                del sharp_edge_indices_from_polygons
+                del p_flat_loop_indices_mask
+                del p_flat
+                del p_use_smooth
+                del polygon_sides
             else:
                 t_ps = numpy.empty(0, dtype=numpy.int32)
         lay_smooth = elem_data_single_int32(geom, b"LayerElementSmoothing", 0)
@@ -1065,29 +1108,24 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         elem_data_single_string(lay_smooth, b"ReferenceInformationType", b"Direct")
         elem_data_single_int32_array(lay_smooth, b"Smoothing", t_ps)  # Sight, int32 for bool...
         del t_ps
-    del t_pvi_edge_keys
     del t_ls
+    del t_lei
 
     # Edge crease for subdivision
     if write_crease:
-        if edges_map:
-            t_ec_raw = numpy.empty(len(me.edges), dtype=numpy.single)
+        if t_pvi_edge_indices.size:
+            edge_crease_dtype = numpy.single
+            t_ec_raw = numpy.empty(len(me.edges), dtype=edge_crease_dtype)
             me.edges.foreach_get('crease', t_ec_raw)
 
-            # using -1 to indicate unmapped
-            edge_index_gen = (edges_map.get(t, -1) for t in edge_keys_cache.edge_keys)
-
-            edge_indices = numpy.fromiter(edge_index_gen, dtype=numpy.int32, count=len(t_ec_raw))
-
-            in_map = edge_indices != -1
-
-            t_ec = numpy.empty(edges_nbr, numpy.float64)
+            # Convert to t_pvi edge keys
+            t_ec_ek_raw = t_ec_raw[t_pvi_edge_indices]
 
             # Blender squares those values before sending them to OpenSubdiv, when other software don't,
             # so we need to compensate that to get similar results through FBX...
-            creases_in_map = t_ec_raw[in_map].astype(numpy.float64)
-
-            t_ec[edge_indices[in_map]] = numpy.square(creases_in_map, out=creases_in_map)
+            t_ec = numpy.square(t_ec_ek_raw.astype(numpy.float64))
+            del t_ec_ek_raw
+            del t_ec_raw
         else:
             t_ec = numpy.empty(0, dtype=numpy.float64)
 
@@ -1100,7 +1138,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         del t_ec
 
     # And we are done with edges!
-    del edges_map
+    del t_pvi_edge_indices
 
     # Loop normals.
     tspacenumber = 0
