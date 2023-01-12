@@ -261,8 +261,9 @@ def similar_values_iter(v1, v2, e=1e-6):
     return True
 
 
-def shape_exclude_similar(sv_cos, ref_cos, e=1e-6):
-    """Return vertices in sv_cos not similar to ref_cos and their indices in sv_cos"""
+def shape_difference_exclude_similar(sv_cos, ref_cos, e=1e-6):
+    """Return the difference between vertices in sv_cos and ref_cos, but only for vertices in sv_cos that are not
+    similar to the corresponding vertex in ref_cos, and their indices"""
 
     empty_cos = numpy.empty((0, 3), dtype=sv_cos.dtype)
     empty_indices = numpy.empty(0, dtype=numpy.int32)
@@ -294,11 +295,13 @@ def shape_exclude_similar(sv_cos, ref_cos, e=1e-6):
     # If a co contains any x, y or z value which is not equal or not close, then the co is considered different
     different_cos = numpy.any(not_similar, axis=1)
 
-    # Get all the cos in sv_cos that are different from the corresponding cos in ref_cos
-    shape_verts_co = sv_cos[different_cos]
-    (shape_verts_idx, ) = different_cos.nonzero()
+    # Get the indices of the cos in sv_cos that are different from the corresponding cos in ref_cos
+    shape_verts_idx = numpy.flatnonzero(different_cos)
 
-    return shape_verts_co, shape_verts_idx.astype(numpy.int32)
+    # Get the difference between sv_cos and ref_cos for only the cos that are considered different
+    difference_cos = sv_cos[shape_verts_idx] - ref_cos[shape_verts_idx]
+
+    return difference_cos, shape_verts_idx
 
 
 def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
