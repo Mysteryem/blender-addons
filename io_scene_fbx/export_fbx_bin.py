@@ -1301,14 +1301,34 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     #       Textures are now only related to materials, in FBX!
     uvnumber = len(me.uv_layers)
     if uvnumber:
+        luv_bl_dtype = numpy.single
+        luv_fbx_dtype = numpy.float64
+        lv_ifx_fbx_dtype = numpy.int32
+        t_luv = numpy.empty(mesh_loop_nbr * 2, dtype=luv_bl_dtype)
+        t_lvidx = numpy.empty(mesh_loop_nbr, dtype=vertex_index_dtype)
+        me.loops.foreach_get("vertex_index", t_lvidx)
         # Looks like this mapping is also expected to convey UV islands (arg..... :((((( ).
         # So we need to generate unique triplets (uv, vertex_idx) here, not only just based on UV values.
-        def _uvtuples_gen(raw_uvs, raw_lvidxs):
-            return zip(zip(*(iter(raw_uvs),) * 2), raw_lvidxs)
 
-        t_luv = array.array('f', (0.0,)) * len(me.loops) * 2
-        t_lvidx = array.array('I', (0,)) * len(me.loops)
-        me.loops.foreach_get("vertex_index", t_lvidx)
+        # We could combine the data together and view as a triplet such as
+        unique_triplet_dtype = numpy.dtype([('', t_luv.dtype), ('', t_luv.dtype), ('', t_lvidx.dtype)])
+        # but since we only care about uniqueness and not order (numpy.unique also sorts), it's faster to treat each
+        # triplet as raw byte data of the same size.
+        # Note that this will cause NaN uv components to be considered the same when it comes to uniqueness, whereas
+        # .unique would usually consider every NaN value to be different (can be disabled as of Numpy 1.24)
+        unique_triplet_dtype = f'V{unique_triplet_dtype.itemsize}'
+        single_raw_byte_dtype = 'V1'
+
+        # Since the t_luv and t_lvidx arrays are different types, we have to view them as the same type to easily join
+        # them together.
+        t_luv_byte_view = t_luv.view(single_raw_byte_dtype)
+        t_lvidx_byte_view = t_lvidx.view(single_raw_byte_dtype)
+        # Next change the shape of the views to 2D whereby each row has the raw bytes for a single element of the
+        # original array. For t_luv, we consider each uv pair to be a single element, so it's twice the number of bytes
+        # per row.
+        t_luv_byte_view.shape = (-1, 2 * t_luv.dtype.itemsize)
+        t_lvidx_byte_view.shape = (-1, t_lvidx.dtype.itemsize)
+
         for uvindex, uvlayer in enumerate(me.uv_layers):
             uvlayer.data.foreach_get("uv", t_luv)
             lay_uv = elem_data_single_int32(geom, b"LayerElementUV", uvindex)
@@ -1317,28 +1337,38 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_uv, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_uv, b"ReferenceInformationType", b"IndexToDirect")
 
-            next_unique_tuple_index = 0
-            uv2idx = {}
-            unique_uv_pairs = array.array(data_types.ARRAY_FLOAT64)
-            uv_indices = array.array(data_types.ARRAY_INT32, (0,)) * len(me.loops)
+            # Stack both arrays (viewed as raw bytes) into a single array and view as triplets of raw bytes
+            # If each uv component and idx was a single byte, it would look something like this:
+            # [[u0,v0],       [[idx0],    [[u0,v0,idx0],                                [[triplet0],
+            #  [u1,v1], stack  [idx1], ->  [u1,v1,idx1],  view(unique_triplet_dtype) ->  [triplet1],
+            #    ...             ...           ...                                          ...
+            #  [un,vn]]        [idxn]]     [un,vn,idxn]]                                 [tripletn]]
+            triplets = numpy.column_stack((t_luv_byte_view, t_lvidx_byte_view)).view(unique_triplet_dtype)
 
-            for index, uvidx in enumerate(_uvtuples_gen(t_luv, t_lvidx)):
-                tuple_index = uv2idx.setdefault(uvidx, next_unique_tuple_index)
-                is_new = tuple_index == next_unique_tuple_index
-                if is_new:
-                    uv = uvidx[0]
-                    unique_uv_pairs.extend(uv)
-                    next_unique_tuple_index += 1
-                uv_indices[index] = tuple_index
+            # .unique without an axis argument will flatten the input triplet array to 1d
+            _unique_triplets, unique_indices, uv_indices = numpy.unique(
+                triplets, return_index=True, return_inverse=True)
+
+            # It's much simpler to construct the uv pairs from the unique indices than it is to extract the uv pairs
+            # from _unique_triplets and the performance difference is negligible
+            unique_uv_pairs = t_luv.reshape(-1, 2)[unique_indices]
+
+            # Convert to the types needed for fbx
+            # Also re-flatten uvs
+            unique_uv_pairs = unique_uv_pairs.astype(luv_fbx_dtype).ravel()
+            uv_indices = uv_indices.astype(lv_ifx_fbx_dtype)
 
             elem_data_single_float64_array(lay_uv, b"UV", unique_uv_pairs)
             elem_data_single_int32_array(lay_uv, b"UVIndex", uv_indices)
-            del uv2idx
+            del triplets
+            del _unique_triplets
+            del unique_triplets_byte_view
             del unique_uv_pairs
             del uv_indices
         del t_luv
         del t_lvidx
-        del _uvtuples_gen
+        del t_luv_byte_view
+        del t_lvidx_byte_view
 
     # Face's materials.
     me_fbxmaterials_idx = scene_data.mesh_material_indices.get(me)
