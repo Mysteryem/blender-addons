@@ -1154,36 +1154,32 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         me.loops.foreach_get("normal", t_ln)
         t_ln = nors_transformed(t_ln, geom_mat_no)
         if 0:
+            lnidx_fbx_dtype = numpy.int32
             lay_nor = elem_data_single_int32(geom, b"LayerElementNormal", 0)
             elem_data_single_int32(lay_nor, b"Version", FBX_GEOMETRY_NORMAL_VERSION)
             elem_data_single_string(lay_nor, b"Name", b"")
             elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_nor, b"ReferenceInformationType", b"IndexToDirect")
 
-            unique_index = 0
-            ln2idx = {}
+            # Tuple of unique sorted normals and then the index in export_ln of each normal in t_ln
+            # Since we don't care about how the normals are sorted, only that they're unique, it's faster if we
+            #
+            export_ln, export_lnidx = numpy.unique(t_ln.view(f'V{t_ln.itemsize * 3}'), return_inverse=True)
 
-            export_ln = array.array(data_types.ARRAY_FLOAT64)
-            export_lnidx = array.array(data_types.ARRAY_INT32, (0,)) * len(me.loops)
-            for index, ln in enumerate(t_ln):
-                # ln is an array itself which can't be indexed so can't be used as a dictionary key
-                # convert it to something that can
-                # ln.tobytes() is faster than tuple(ln)
-                existing = ln2idx.setdefault(ln.tobytes(), unique_index)
-                was_added = existing == unique_index
-                if was_added:
-                    export_ln.extend(ln)
-                    unique_index += 1
-                export_lnidx[index] = existing
+            # View in the original dtype again
+            export_ln = export_ln.view(t_ln.dtype)
+
+            # Convert the types for fbx
+            export_ln = astype_view_signedness(export_ln, ln_fbx_dtype)
+            export_lnidx = astype_view_signedness(export_lnidx, lnidx_fbx_dtype)
 
             elem_data_single_float64_array(lay_nor, b"Normals", export_ln)
             # Normal weights, no idea what it is.
-            # t_lnw = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(ln2idx)
+            # t_lnw = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(export_ln)
             # elem_data_single_float64_array(lay_nor, b"NormalsW", t_lnw)
 
             elem_data_single_int32_array(lay_nor, b"NormalsIndex", export_lnidx)
 
-            del ln2idx
             del export_ln
             del export_lnidx
             # del t_lnw
