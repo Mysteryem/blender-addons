@@ -48,7 +48,7 @@ from .fbx_utils import (
     # Miscellaneous utils.
     PerfMon,
     units_blender_to_fbx_factor, units_convertor, units_convertor_iter,
-    matrix4_to_array, similar_values, shape_difference_exclude_similar,
+    matrix4_to_array, similar_values, shape_difference_exclude_similar, astype_view_signedness,
     # Mesh transform helpers.
     vcos_transformed, nors_transformed,
     # UUID from key.
@@ -885,14 +885,18 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     elem_data_single_int32(geom, b"GeometryVersion", FBX_GEOMETRY_VERSION)
 
     # Vertex cos.
-    t_co = numpy.empty(len(me.vertices) * 3, dtype=numpy.single)
+    co_bl_dtype = numpy.single
+    t_co = numpy.empty(len(me.vertices) * 3, dtype=co_bl_dtype)
     # When a mesh has shape keys, the reference shape key and the vertices of the mesh can become desynchronized. The
     # reference shape key is what users see within Blender, so export the vertex cos based on the reference shape key.
     if me.shape_keys:
         me.shape_keys.reference_key.data.foreach_get("co", t_co)
     else:
         me.vertices.foreach_get("co", t_co)
-    elem_data_single_float64_array(geom, b"Vertices", vcos_transformed(t_co, geom_mat_co).astype(numpy.float64))
+    t_co = vcos_transformed(t_co, geom_mat_co)
+    co_fbx_dtype = numpy.float64
+    t_co = astype_view_signedness(t_co, co_fbx_dtype)
+    elem_data_single_float64_array(geom, b"Vertices", t_co)
     del t_co
 
     # Polygon indices.
@@ -900,23 +904,24 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     # We do loose edges as two-vertices faces, if enabled...
     #
     # Note we have to process Edges in the same time, as they are based on poly's loops...
-    loop_nbr = len(me.loops)
-    mesh_loop_nbr = loop_nbr
+    mesh_loop_nbr = len(me.loops)
     """The original number of loops, prior to adding any extra loops for loose edges"""
+    loop_nbr = mesh_loop_nbr
+    """Total number of loops, including any extra added for loose edges"""
     mesh_poly_nbr = len(me.polygons)
     """The original number of polygons, prior to adding any extra polygons for loose edges"""
 
     # dtypes matching the internal C data
-    vertex_index_dtype = edge_index_dtype = loop_index_dtype = numpy.uintc
+    bl_vertex_index_dtype = bl_edge_index_dtype = bl_loop_index_dtype = numpy.uintc
 
-    t_pvi = numpy.empty(loop_nbr, dtype=vertex_index_dtype)
+    t_pvi = numpy.empty(mesh_loop_nbr, dtype=bl_vertex_index_dtype)
     """Start vertex indices of loops"""
-    t_ls = numpy.empty(len(me.polygons), dtype=loop_index_dtype)
+    t_ls = numpy.empty(len(me.polygons), dtype=bl_loop_index_dtype)
     """Loop start indices of polygons"""
-    t_ev = numpy.empty(len(me.edges) * 2, dtype=vertex_index_dtype)
+    t_ev = numpy.empty(len(me.edges) * 2, dtype=bl_vertex_index_dtype)
     """Vertex indices of edges (unsorted, unlike Mesh.edge_keys), flattened into an array twice the length of the number
     of edges"""
-    t_lei = numpy.empty(loop_nbr, dtype=edge_index_dtype)
+    t_lei = numpy.empty(mesh_loop_nbr, dtype=bl_edge_index_dtype)
     """Edge indices of loops"""
 
     me.loops.foreach_get("vertex_index", t_pvi)
@@ -926,8 +931,9 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
     # Add "fake" faces for loose edges. Each "fake" face consists of two loops.
     if scene_data.settings.use_mesh_edges:
+        edge_is_loose_dtype = bool
         # Get the mask of edges that are loose
-        t_loose = numpy.empty(len(me.edges), dtype=bool)
+        t_loose = numpy.empty(len(me.edges), dtype=edge_is_loose_dtype)
         me.edges.foreach_get('is_loose', t_loose)
 
         indices_of_loose_edges = numpy.flatnonzero(t_loose)
@@ -960,11 +966,13 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     #                 for loose edges).
     #       We also have to store a mapping from real edges to their indices in this array, for edge-mapped data
     #       (like e.g. crease).
-    t_eli = numpy.empty(0, dtype=numpy.int32)
+    eli_fbx_dtype = numpy.int32
+    """Loop indices of unique loops, comparing uniqueness by the edge-key of each loop's edge. The loop index is always
+    the first occurrence of that edge-key"""
     t_pvi_edge_indices = numpy.empty(0, dtype=t_lei.dtype)
-    """Edge index of each t_pvi_edge_key, used to map per-edge data to t_pvi"""
+    """Edge index of each unique edge-key, used to map per-edge data to unique edge-keys (t_pvi)"""
 
-    """The number of times each pvi edge key was found, equals the number of polygons each edge key is in"""
+    pvi_fbx_dtype = numpy.int32
     if t_ls.size and t_pvi.size:
         # The index of the end of each loop is one before the start of the next loop
         # The index of the end of the last loop will be the very last index
@@ -994,18 +1002,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         # Edge index of each element in unique t_pvi_edge_keys, used to map per-edge data such as sharp and creases
         t_pvi_edge_indices = t_lei[t_eli]
 
-        if t_eli.dtype.itemsize == numpy.int32.itemsize:
-            t_eli = t_eli.view(numpy.int32)
-        else:
-            t_eli = t_eli.astype(numpy.int32)
-
-        # t_pvi's dtype is numpy.uintc which could vary in size depending on the compiler, but needs to be written as
-        # a signed 32 bit integer
-        # Use a view where possible instead of making a copy with the new type
-        if t_pvi.dtype.itemsize == numpy.int32.itemsize:
-            t_pvi = t_pvi.view(numpy.int32)
-        else:
-            t_pvi = t_pvi.astype(numpy.int32)
+        # Ensure t_pvi is the correct number of bits before inverting each loop end index.
+        t_pvi = astype_view_signedness(t_pvi, pvi_fbx_dtype)
 
         # ^-1 the last index of each loop
         t_pvi[loop_end_indices] ^= -1
@@ -1016,9 +1014,12 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         del loop_end_indices
     else:
         # Should be empty, but make sure it's the correct type
-        t_pvi = numpy.empty(0, dtype=numpy.int32)
+        t_pvi = numpy.empty(0, dtype=pvi_fbx_dtype)
+        t_eli = numpy.empty(0, dtype=eli_fbx_dtype)
 
     # And finally we can write data!
+    t_pvi = astype_view_signedness(t_pvi, pvi_fbx_dtype)
+    t_eli = astype_view_signedness(t_eli, eli_fbx_dtype)
     elem_data_single_int32_array(geom, b"PolygonVertexIndex", t_pvi)
     elem_data_single_int32_array(geom, b"Edges", t_eli)
     del t_pvi
@@ -1029,11 +1030,13 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
     # Smoothing.
     if smooth_type in {'FACE', 'EDGE'}:
+        ps_fbx_dtype = numpy.int32
+        poly_use_smooth_dtype = bool
+        edge_use_sharp_dtype = bool
         _map = b""
         if smooth_type == 'FACE':
-            t_ps = numpy.empty(mesh_poly_nbr, dtype=bool)
+            t_ps = numpy.empty(mesh_poly_nbr, dtype=poly_use_smooth_dtype)
             me.polygons.foreach_get("use_smooth", t_ps)
-            t_ps = t_ps.astype(numpy.int32)
             _map = b"ByPolygon"
         else:  # EDGE
             _map = b"ByEdge"
@@ -1050,7 +1053,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # loose edges that don't exist in the mesh itself
                 polygon_sides = numpy.diff(t_ls[:mesh_poly_nbr], append=mesh_loop_nbr)
                 # Get the 'use_smooth' attribute of all polygons
-                p_use_smooth = numpy.empty(mesh_poly_nbr, dtype=bool)
+                p_use_smooth = numpy.empty(mesh_poly_nbr, dtype=poly_use_smooth_dtype)
                 me.polygons.foreach_get('use_smooth', p_use_smooth)
                 # Invert to get all flat shaded polygons
                 p_flat = numpy.invert(p_use_smooth, out=p_use_smooth)
@@ -1065,7 +1068,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 sharp_edge_indices_from_polygons = t_lei[:mesh_loop_nbr][p_flat_loop_indices_mask]
 
                 # - Get sharp edges from edges marked as sharp
-                e_use_sharp = numpy.empty(mesh_edge_nbr, dtype=bool)
+                e_use_sharp = numpy.empty(mesh_edge_nbr, dtype=edge_use_sharp_dtype)
                 me.edges.foreach_get('use_edge_sharp', e_use_sharp)
 
                 # - Get sharp edges from edges used by more than two loops (and thus more than two faces)
@@ -1080,9 +1083,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # - Convert sharp edges to sharp edge keys (t_pvi)
                 ek_use_sharp = e_use_sharp[t_pvi_edge_indices]
 
-                # - Sharp edges are indicated in FBX as zero (False)
-                # Invert and convert to int32 to match the exported type
-                t_ps = numpy.invert(ek_use_sharp, out=ek_use_sharp).astype(numpy.int32)
+                # - Sharp edges are indicated in FBX as zero (False), so invert
+                t_ps = numpy.invert(ek_use_sharp, out=ek_use_sharp)
                 del ek_use_sharp
                 del e_use_sharp
                 del sharp_edge_indices_from_polygons
@@ -1091,7 +1093,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 del p_use_smooth
                 del polygon_sides
             else:
-                t_ps = numpy.empty(0, dtype=numpy.int32)
+                t_ps = numpy.empty(0, dtype=ps_fbx_dtype)
+        t_ps = astype_view_signedness(t_ps, ps_fbx_dtype)
         lay_smooth = elem_data_single_int32(geom, b"LayerElementSmoothing", 0)
         elem_data_single_int32(lay_smooth, b"Version", FBX_GEOMETRY_SMOOTHING_VERSION)
         elem_data_single_string(lay_smooth, b"Name", b"")
@@ -1104,21 +1107,24 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
     # Edge crease for subdivision
     if write_crease:
+        ec_fbx_dtype = numpy.float64
         if t_pvi_edge_indices.size:
-            edge_crease_dtype = numpy.single
-            t_ec_raw = numpy.empty(len(me.edges), dtype=edge_crease_dtype)
+            ec_bl_dtype = numpy.single
+            t_ec_raw = numpy.empty(len(me.edges), dtype=ec_bl_dtype)
             me.edges.foreach_get('crease', t_ec_raw)
 
-            # Convert to t_pvi edge keys
+            # Convert to t_pvi edge-keys
             t_ec_ek_raw = t_ec_raw[t_pvi_edge_indices]
 
             # Blender squares those values before sending them to OpenSubdiv, when other software don't,
             # so we need to compensate that to get similar results through FBX...
-            t_ec = numpy.square(t_ec_ek_raw.astype(numpy.float64))
+            # Use the precision of the fbx dtype to store the result
+            t_ec_ek_raw = astype_view_signedness(t_ec_ek_raw, ec_fbx_dtype)
+            t_ec = numpy.square(t_ec_ek_raw, out=t_ec_ek_raw)
             del t_ec_ek_raw
             del t_ec_raw
         else:
-            t_ec = numpy.empty(0, dtype=numpy.float64)
+            t_ec = numpy.empty(0, dtype=ec_fbx_dtype)
 
         lay_crease = elem_data_single_int32(geom, b"LayerElementEdgeCrease", 0)
         elem_data_single_int32(lay_crease, b"Version", FBX_GEOMETRY_CREASE_VERSION)
@@ -1139,7 +1145,9 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         #     but this does not seem well supported by apps currently...
         me.calc_normals_split()
 
-        t_ln = numpy.empty(len(me.loops) * 3,  dtype=numpy.single)
+        ln_bl_dtype = numpy.single
+        ln_fbx_dtype = numpy.float64
+        t_ln = numpy.empty(len(me.loops) * 3,  dtype=ln_bl_dtype)
         me.loops.foreach_get("normal", t_ln)
         t_ln = nors_transformed(t_ln, geom_mat_no)
         if 0:
@@ -1177,12 +1185,13 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             del export_lnidx
             # del t_lnw
         else:
+            t_ln = astype_view_signedness(t_ln, ln_fbx_dtype)
             lay_nor = elem_data_single_int32(geom, b"LayerElementNormal", 0)
             elem_data_single_int32(lay_nor, b"Version", FBX_GEOMETRY_NORMAL_VERSION)
             elem_data_single_string(lay_nor, b"Name", b"")
             elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
-            elem_data_single_float64_array(lay_nor, b"Normals", t_ln.astype(numpy.float64))
+            elem_data_single_float64_array(lay_nor, b"Normals", t_ln)
             # Normal weights, no idea what it is.
             # t_ln = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.loops)
             # elem_data_single_float64_array(lay_nor, b"NormalsW", t_ln)
@@ -1193,7 +1202,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             tspacenumber = len(me.uv_layers)
             if tspacenumber:
                 # We can only compute tspace on tessellated meshes, need to check that here...
-                t_lt = numpy.empty(len(me.polygons), dtype=numpy.uintc)
+                lt_bl_dtype = numpy.uintc
+                t_lt = numpy.empty(len(me.polygons), dtype=lt_bl_dtype)
                 me.polygons.foreach_get("loop_total", t_lt)
                 if (t_lt > 4).any():
                     del t_lt
@@ -1203,12 +1213,11 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                              "cannot compute/export tangent space for it") % me.name)
                 else:
                     del t_lt
-                    num_loops = len(me.loops)
-                    t_ln = numpy.empty(len(me.loops) * 3, dtype=numpy.single)
+                    t_ln = numpy.empty(mesh_loop_nbr * 3, dtype=ln_bl_dtype)
                     # t_lnw = array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(me.loops)
                     uv_names = [uvlayer.name for uvlayer in me.uv_layers]
                     # Annoying, `me.calc_tangent` errors in case there is no geometry...
-                    if num_loops > 0:
+                    if mesh_loop_nbr > 0:
                         for name in uv_names:
                             me.calc_tangents(uvmap=name)
                     for idx, uvlayer in enumerate(me.uv_layers):
@@ -1222,7 +1231,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Binormals",
-                                                       nors_transformed(t_ln, geom_mat_no).astype(numpy.float64))
+                                                       astype_view_signedness(
+                                                           nors_transformed(t_ln, geom_mat_no), numpy.float64))
                         # Binormal weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"BinormalsW", t_lnw)
 
@@ -1235,7 +1245,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Tangents",
-                                                       nors_transformed(t_ln, geom_mat_no).astype(numpy.float64))
+                                                       astype_view_signedness(
+                                                           nors_transformed(t_ln, geom_mat_no), numpy.float64))
                         # Tangent weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"TangentsW", t_lnw)
 
@@ -1305,7 +1316,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         luv_fbx_dtype = numpy.float64
         lv_ifx_fbx_dtype = numpy.int32
         t_luv = numpy.empty(mesh_loop_nbr * 2, dtype=luv_bl_dtype)
-        t_lvidx = numpy.empty(mesh_loop_nbr, dtype=vertex_index_dtype)
+        t_lvidx = numpy.empty(mesh_loop_nbr, dtype=bl_vertex_index_dtype)
         me.loops.foreach_get("vertex_index", t_lvidx)
         # Looks like this mapping is also expected to convey UV islands (arg..... :((((( ).
         # So we need to generate unique triplets (uv, vertex_idx) here, not only just based on UV values.
@@ -1355,8 +1366,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
             # Convert to the types needed for fbx
             # Also re-flatten uvs
-            unique_uv_pairs = unique_uv_pairs.astype(luv_fbx_dtype).ravel()
-            uv_indices = uv_indices.astype(lv_ifx_fbx_dtype)
+            unique_uv_pairs = astype_view_signedness(unique_uv_pairs, luv_fbx_dtype).ravel()
+            uv_indices = astype_view_signedness(uv_indices, lv_ifx_fbx_dtype)
 
             elem_data_single_float64_array(lay_uv, b"UV", unique_uv_pairs)
             elem_data_single_int32_array(lay_uv, b"UVIndex", uv_indices)
@@ -2601,8 +2612,8 @@ def fbx_data_from_scene(scene, depsgraph, settings):
                 shape_verts_co, shape_verts_idx = shape_difference_exclude_similar(sv_cos, ref_cos)
 
                 # Ensure the arrays are of the correct type
-                shape_verts_co = shape_verts_co.astype(co_fbx_dtype, copy=False)
-                shape_verts_idx = shape_verts_idx.astype(idx_fbx_dtype, copy=False)
+                shape_verts_co = astype_view_signedness(shape_verts_co, co_fbx_dtype)
+                shape_verts_idx = astype_view_signedness(shape_verts_idx, idx_fbx_dtype)
 
                 if not shape_verts_co.size:
                     shape_verts_co, shape_verts_idx = empty_verts_fallbacks()

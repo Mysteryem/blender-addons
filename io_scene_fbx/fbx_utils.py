@@ -376,6 +376,48 @@ def nors_transformed(raw_nors, m=None):
     return _mat4_vec3_array_multiply(m, raw_nors)
 
 
+def astype_view_signedness(arr, new_type, *args, **kwargs):
+    """numpy.ndarray.astype with copy=False, but unsafely views data with the signedness of the new type in advance if
+    the itemsize of arr matches but the signedness does not.
+
+    The benefit of copy=False is that if the array can be safely viewed as the new type, then a view is made, instead of
+    a copy with the new type.
+
+    Unsigned types can't be viewed safely as signed or vice-versa, meaning that a copy would always be made by
+    .astype(..., copy=False).
+
+    By unsafely viewing the data with the signedness of the new type in advance, the signedness restriction of returning
+    a view from .astype(..., copy=False) is ignored."""
+    if not isinstance(new_type, numpy.dtype):
+        # new_type could be a type instance. Make sure it's a dtype, so we can get its itemsize and kind if needed.
+        new_type = numpy.dtype(new_type)
+
+    # TODO: Technically not true if the new itemsize is smaller and the type is an int or uint, since a view can be made
+    #  of a half/quarter/eighth of the bytes, not sure if numpy allows this with copy=False, but we could implement it
+    #  ourselves
+    # If the itemsize differs then a view is immediately impossible.
+    # This also avoids potential issues with ignoring signedness such as arr of type numpy.uint8 being converted to
+    # numpy.int16:
+    # Normally uint8(255) -> int16(255), but viewing as int8 in advance would give int8(-1) -> int16(-1)
+    if arr.itemsize == new_type.itemsize:
+        # Signed and unsigned int are opposite in terms of signedness. Other types don't have signedness
+        opposite_signedness_kinds = {'i': 'u', 'u': 'i'}
+
+        arr_dtype = arr.dtype
+        arr_dtype_kind = arr_dtype.kind
+        if arr_dtype_kind in opposite_signedness_kinds:
+            # Get the opposite kind for the input array's dtype
+            opposite_kind = opposite_signedness_kinds[arr_dtype_kind]
+
+            # If new_type has opposite signedness, create a new dtype of the input array's dtype, but with opposite
+            # signedness and view the input array with that new dtype
+            if new_type.kind == opposite_kind:
+                opposite_kind_dtype = numpy.dtype(arr_dtype.str.replace(arr_dtype_kind, opposite_kind))
+                arr = arr.view(opposite_kind_dtype)
+
+    return arr.astype(new_type, *args, copy=False, **kwargs)
+
+
 # ##### UIDs code. #####
 
 # ID class (mere int).
