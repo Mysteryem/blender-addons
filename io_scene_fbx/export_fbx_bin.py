@@ -991,8 +991,11 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         # shouldn't normally happen), only the first edge found in loops will be exported along with its crease/sharp
         # To export separate edges that share the same vertices, .unique can be run with t_lei as the first argument and
         # without the axis argument, finding unique edges rather than unique edge keys.
-        unique_edges_map_keys_sorted, indices_of_first_found = (
-            numpy.unique(t_pvi_edge_keys, return_index=True, axis=0))
+        #
+        # Since we don't care about sorting, we can pass t_pvi_edge_keys in as raw data (with each element being a
+        # single edge key) for a performance boost
+        _unique_pvi_edge_keys_raw, indices_of_first_found = (
+            numpy.unique(t_pvi_edge_keys.view(f'V{t_pvi_edge_keys.itemsize * 2}'), return_index=True))
 
         # Indices of the elements in t_pvi_edge_keys that produce unique_edges_map_keys_sorted but in the original order
         unique_edge_key_loop_indices = numpy.sort(indices_of_first_found)
@@ -1009,7 +1012,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         t_pvi[loop_end_indices] ^= -1
         del t_pvi_edge_keys
         del unique_edge_key_loop_indices
-        del unique_edges_map_keys_sorted
+        del _unique_pvi_edge_keys_raw
         del t_ev_pair_view
         del loop_end_indices
     else:
