@@ -886,7 +886,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
     # Vertex cos.
     co_bl_dtype = numpy.single
-    t_co = numpy.empty(len(me.vertices) * 3, dtype=co_bl_dtype)
+    mesh_vert_nbr = len(me.vertices)
+    t_co = numpy.empty(mesh_vert_nbr * 3, dtype=co_bl_dtype)
     # When a mesh has shape keys, the reference shape key and the vertices of the mesh can become desynchronized. The
     # reference shape key is what users see within Blender, so export the vertex cos based on the reference shape key.
     if me.shape_keys:
@@ -914,7 +915,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     # dtypes matching the internal C data
     bl_vertex_index_dtype = bl_edge_index_dtype = bl_loop_index_dtype = numpy.uintc
 
-    t_pvi = numpy.empty(mesh_loop_nbr, dtype=bl_vertex_index_dtype)
+    t_lvi = numpy.empty(mesh_loop_nbr, dtype=bl_vertex_index_dtype)
     """Start vertex indices of loops"""
     t_ls = numpy.empty(len(me.polygons), dtype=bl_loop_index_dtype)
     """Loop start indices of polygons"""
@@ -924,7 +925,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     t_lei = numpy.empty(mesh_loop_nbr, dtype=bl_edge_index_dtype)
     """Edge indices of loops"""
 
-    me.loops.foreach_get("vertex_index", t_pvi)
+    me.loops.foreach_get("vertex_index", t_lvi)
     me.polygons.foreach_get("loop_start", t_ls)
     me.edges.foreach_get("vertices", t_ev)
     me.loops.foreach_get("edge_index", t_lei)
@@ -947,7 +948,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         t_le = t_ev_pair_view[t_loose]
 
         # append will automatically flatten the pairs in t_le
-        t_pvi = numpy.append(t_pvi, t_le)
+        t_lvi = numpy.append(t_lvi, t_le)
         t_lei = numpy.append(t_lei, new_loop_edge_indices)
         # Two loops are added per loose edge
         loop_nbr += 2 * len(t_le)
@@ -973,10 +974,10 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     """Edge index of each unique edge-key, used to map per-edge data to unique edge-keys (t_pvi)"""
 
     pvi_fbx_dtype = numpy.int32
-    if t_ls.size and t_pvi.size:
+    if t_ls.size and t_lvi.size:
         # The index of the end of each loop is one before the start of the next loop
         # The index of the end of the last loop will be the very last index
-        loop_end_indices = numpy.append(t_ls[1:], len(t_pvi)) - 1
+        loop_end_indices = numpy.append(t_ls[1:], len(t_lvi)) - 1
 
         # Get unsorted edge keys by indexing the edge->vertex-indices array by the loop->edge-index array
         # View the edge vertices array as pairs since there are two per edge
@@ -1006,7 +1007,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         t_pvi_edge_indices = t_lei[t_eli]
 
         # Ensure t_pvi is the correct number of bits before inverting each loop end index.
-        t_pvi = astype_view_signedness(t_pvi, pvi_fbx_dtype)
+        # We always create a copy so that t_lvi doesn't get modified in the next step
+        t_pvi = t_lvi.astype(pvi_fbx_dtype)
 
         # ^-1 the last index of each loop
         t_pvi[loop_end_indices] ^= -1
@@ -1259,15 +1261,17 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     colors_type = scene_data.settings.colors_type
     vcolnumber = 0 if colors_type == 'NONE' else len(me.color_attributes)
     if vcolnumber:
-        def _coltuples_gen(raw_cols):
-            return zip(*(iter(raw_cols),) * 4)
-
         color_prop_name = "color_srgb" if colors_type == 'SRGB' else "color"
+        # ByteColorAttribute color also gets returned by the API as single precision float
+        bl_lc_dtype = numpy.single
+        fbx_lc_dtype = numpy.float64
+        fbx_lcidx_dtype = numpy.int32
 
         for colindex, collayer in enumerate(me.color_attributes):
             is_point = collayer.domain == "POINT"
-            vcollen = len(me.vertices if is_point else me.loops)
-            t_lc = array.array('f', (0.0,)) * vcollen * 4
+            vcollen = mesh_vert_nbr if is_point else mesh_loop_nbr
+            # Each rgba component is flattened in the array
+            t_lc = numpy.empty(vcollen * 4, dtype=bl_lc_dtype)
             collayer.data.foreach_get(color_prop_name, t_lc)
             lay_vcol = elem_data_single_int32(geom, b"LayerElementColor", colindex)
             elem_data_single_int32(lay_vcol, b"Version", FBX_GEOMETRY_VCOLOR_VERSION)
@@ -1275,36 +1279,27 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_vcol, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_vcol, b"ReferenceInformationType", b"IndexToDirect")
 
-            # next_unique_tuple_index = 0
-            # col2idx = {}
-            # unique_coltuples = array.array(data_types.ARRAY_FLOAT64)
-            # coltuple_indices = array.array(data_types.ARRAY_INT32, (0,)) * len(me.loops)
-            # for index, coltuple in enumerate(_coltuples_gen(t_lc)):
-            #     tuple_index = col2idx.setdefault(coltuple, next_unique_tuple_index)
-            #     is_new = tuple_index == next_unique_tuple_index
-            #     if is_new:
-            #         unique_coltuples.extend(coltuple)
-            #         next_unique_tuple_index += 1
-            #     coltuple_indices[index] = tuple_index
-
-            # elem_data_single_float64_array(lay_vcol, b"Colors", unique_coltuples)  # Flatten again...
-            # elem_data_single_int32_array(lay_vcol, b"ColorIndex", coltuple_indices)
-
-            col2idx = tuple(set(_coltuples_gen(t_lc)))
-            elem_data_single_float64_array(lay_vcol, b"Colors", chain(*col2idx))  # Flatten again...
-
-            col2idx = {col: idx for idx, col in enumerate(col2idx)}
-            col_indices = list(col2idx[c] for c in _coltuples_gen(t_lc))
+            # View as raw data, with one element per rgba color, for speed since we don't care about sorting
+            t_lc, col_indices = numpy.unique(t_lc.view(f'V{t_lc.itemsize * 4}'), return_inverse=True)
+            # View back as the original dtype
+            t_lc = t_lc.view(bl_lc_dtype)
             if is_point:
                 # for "point" domain colors, we could directly emit them
                 # with a "ByVertex" mapping type, but some software does not
                 # properly understand that. So expand to full "ByPolygonVertex"
                 # index map.
-                col_indices = list((col_indices[c.vertex_index] for c in me.loops))
+                col_indices = col_indices[t_lvi]
+
+            t_lc = astype_view_signedness(t_lc, fbx_lc_dtype)
+            col_indices = astype_view_signedness(col_indices, fbx_lcidx_dtype)
+
+            elem_data_single_float64_array(lay_vcol, b"Colors", t_lc)
             elem_data_single_int32_array(lay_vcol, b"ColorIndex", col_indices)
-            del col2idx
+
             del t_lc
+            del col_indices
         del _coltuples_gen
+    del t_lvi
 
     # Write UV layers.
     # Note: LayerElementTexture is deprecated since FBX 2011 - luckily!
