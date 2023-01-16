@@ -262,8 +262,7 @@ def similar_values_iter(v1, v2, e=1e-6):
 
 
 def shape_difference_exclude_similar(sv_cos, ref_cos, e=1e-6):
-    """Return the difference between vertices in sv_cos and ref_cos, but only for vertices in sv_cos that are not
-    similar to the corresponding vertex in ref_cos, and their indices"""
+    """Return the difference between vertices in sv_cos and ref_cos that are not similar, and their indices"""
 
     empty_cos = numpy.empty((0, 3), dtype=sv_cos.dtype)
     empty_indices = numpy.empty(0, dtype=numpy.int32)
@@ -284,7 +283,9 @@ def shape_difference_exclude_similar(sv_cos, ref_cos, e=1e-6):
     not_equal_ref_cos = ref_cos[not_equal]
 
     # Note that unlike math.isclose(a,b), numpy.isclose(a,b) is not symmetric and the second argument 'b', is considered
-    # to be the reference value
+    # to be the reference value.
+    # atol=0 will mean that if either value being compared is zero, they won't be considered close, we might want to
+    # change this.
     not_equal_but_close = numpy.isclose(not_equal_sv_cos, not_equal_ref_cos, atol=0, rtol=e)
     not_equal_and_not_close = numpy.invert(not_equal_but_close, out=not_equal_but_close)
 
