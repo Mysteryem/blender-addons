@@ -1290,7 +1290,6 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
             del t_lc
             del col_indices
-        del _coltuples_gen
     del t_lvi
 
     # Write UV layers.
@@ -1359,7 +1358,6 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_int32_array(lay_uv, b"UVIndex", uv_indices)
             del triplets
             del _unique_triplets
-            del unique_triplets_byte_view
             del unique_uv_pairs
             del uv_indices
         del t_luv
