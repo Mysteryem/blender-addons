@@ -895,7 +895,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         me.vertices.foreach_get("co", t_co)
     t_co = vcos_transformed(t_co, geom_mat_co)
     co_fbx_dtype = numpy.float64
-    t_co = astype_view_signedness(t_co, co_fbx_dtype)
+    t_co = t_co.astype(co_fbx_dtype, copy=False)
     elem_data_single_float64_array(geom, b"Vertices", t_co)
     del t_co
 
@@ -1117,7 +1117,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             # Blender squares those values before sending them to OpenSubdiv, when other software don't,
             # so we need to compensate that to get similar results through FBX...
             # Use the precision of the fbx dtype for the calculation
-            t_ec_ek_raw = astype_view_signedness(t_ec_ek_raw, ec_fbx_dtype)
+            t_ec_ek_raw = t_ec_ek_raw.astype(ec_fbx_dtype, copy=False)
             t_ec = numpy.square(t_ec_ek_raw, out=t_ec_ek_raw)
             del t_ec_ek_raw
             del t_ec_raw
@@ -1165,7 +1165,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             t_ln = export_ln.view(ln_bl_dtype)
 
             # Convert the types for fbx
-            t_ln = astype_view_signedness(t_ln, ln_fbx_dtype)
+            t_ln = t_ln.astype(ln_fbx_dtype, copy=False)
             t_lnidx = astype_view_signedness(t_lnidx, lnidx_fbx_dtype)
 
             elem_data_single_float64_array(lay_nor, b"Normals", t_ln)
@@ -1178,7 +1178,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             del t_lnidx
             # del t_lnw
         else:
-            t_ln = astype_view_signedness(t_ln, ln_fbx_dtype)
+            t_ln = t_ln.astype(ln_fbx_dtype, copy=False)
             lay_nor = elem_data_single_int32(geom, b"LayerElementNormal", 0)
             elem_data_single_int32(lay_nor, b"Version", FBX_GEOMETRY_NORMAL_VERSION)
             elem_data_single_string(lay_nor, b"Name", b"")
@@ -1224,8 +1224,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Binormals",
-                                                       astype_view_signedness(
-                                                           nors_transformed(t_ln, geom_mat_no), numpy.float64))
+                                                       nors_transformed(t_ln, geom_mat_no)
+                                                       .astype(numpy.float64, copy=False))
                         # Binormal weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"BinormalsW", t_lnw)
 
@@ -1238,8 +1238,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Tangents",
-                                                       astype_view_signedness(
-                                                           nors_transformed(t_ln, geom_mat_no), numpy.float64))
+                                                       nors_transformed(t_ln, geom_mat_no)
+                                                       .astype(numpy.float64, copy=False))
                         # Tangent weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"TangentsW", t_lnw)
 
@@ -1282,7 +1282,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # index map.
                 col_indices = col_indices[t_lvi]
 
-            t_lc = astype_view_signedness(t_lc, fbx_lc_dtype)
+            t_lc = t_lc.astype(fbx_lc_dtype, copy=False)
             col_indices = astype_view_signedness(col_indices, fbx_lcidx_dtype)
 
             elem_data_single_float64_array(lay_vcol, b"Colors", t_lc)
@@ -1350,8 +1350,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             unique_uv_pairs = t_luv.reshape(-1, 2)[unique_indices]
 
             # Convert to the types needed for fbx
-            # Also re-flatten uvs
-            unique_uv_pairs = astype_view_signedness(unique_uv_pairs, luv_fbx_dtype).ravel()
+            unique_uv_pairs = unique_uv_pairs.astype(luv_fbx_dtype, copy=False)
             uv_indices = astype_view_signedness(uv_indices, lv_ifx_fbx_dtype)
 
             elem_data_single_float64_array(lay_uv, b"UV", unique_uv_pairs)
@@ -2596,7 +2595,7 @@ def fbx_data_from_scene(scene, depsgraph, settings):
                 shape_verts_co, shape_verts_idx = shape_difference_exclude_similar(sv_cos, ref_cos)
 
                 # Ensure the arrays are of the correct type
-                shape_verts_co = astype_view_signedness(shape_verts_co, co_fbx_dtype)
+                shape_verts_co = shape_verts_co.astype(co_fbx_dtype, copy=False)
                 shape_verts_idx = astype_view_signedness(shape_verts_idx, idx_fbx_dtype)
 
                 if not shape_verts_co.size:
