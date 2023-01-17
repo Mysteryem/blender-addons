@@ -1156,7 +1156,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_nor, b"ReferenceInformationType", b"IndexToDirect")
 
-            # Tuple of unique sorted normals and then the index in export_ln of each normal in t_ln.
+            # Tuple of unique sorted normals and then the index in the unique sorted normals of each normal in t_ln.
             # Since we don't care about how the normals are sorted, only that they're unique, it's faster if we
             # view them as raw data.
             t_ln, t_lnidx = numpy.unique(t_ln.view(f'V{t_ln.itemsize * 3}'), return_inverse=True)

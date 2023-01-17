@@ -307,7 +307,8 @@ def shape_difference_exclude_similar(sv_cos, ref_cos, e=1e-6):
 
 def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
     """Multiply a 4d matrix by each 3d vector in an array and return as an array of either 3d or 4d vectors.
-    Returns a view of the input array if no multiplication or increase in dimensions is required."""
+    Returns a view of the input array if no multiplication or increase in dimensions is required and the input array can
+    be viewed in the shape of one vector per row."""
     if mat4 is None:
         if return_4d:
             index_to_insert_before = 3
@@ -350,12 +351,11 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
         # ┊ …,  …,  …, …┊
         # └xn, yn, zn, 1┘
 
-        # After multiplication, the result must then be reduced back to 3d.
         # There's no, or negligible, performance difference between the two options.
 
         # First option:
         # result_4d_T = (mat4_np @ vec4_array.T)
-        # result_4d = result_4d_T
+        # result_4d = result_4d_T.T
         # Second option:
         result_4d = (vec4_array @ mat4_np.T)
 
