@@ -1375,7 +1375,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_ma, b"Name", b"")
             nbr_mats = len(me_fbxmaterials_idx)
             if nbr_mats > 1:
-                t_pm = numpy.empty(len(me.polygons), dtype=numpy.ushort)
+                bl_pm_dtype = numpy.uintc
+                t_pm = numpy.empty(len(me.polygons), dtype=bl_pm_dtype)
                 me.polygons.foreach_get("material_index", t_pm)
 
                 # We have to validate mat indices, and map them to FBX indices.
