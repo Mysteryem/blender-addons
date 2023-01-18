@@ -1392,10 +1392,9 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 t_pm[t_pm >= mat_idx_limit] = def_me_blmaterial_idx
 
                 # Map to FBX indices. Materials not in me_fbxmaterials_idx will be set to the default material index.
-                blmat_idx = numpy.arange(len(me_blmaterials), dtype=t_pm.dtype)
                 blmat_fbx_idx = numpy.fromiter((me_fbxmaterials_idx.get(m, def_ma) for m in me_blmaterials),
                                                dtype=numpy.int32)
-                t_pm = blmat_fbx_idx[numpy.searchsorted(blmat_idx, t_pm)]
+                t_pm = blmat_fbx_idx[t_pm]
 
                 elem_data_single_string(lay_ma, b"MappingInformationType", b"ByPolygon")
                 # XXX Logically, should be "Direct" reference type, since we do not have any index array, and have one
