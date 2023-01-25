@@ -1327,6 +1327,20 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
         for uvindex, uvlayer in enumerate(me.uv_layers):
             uvlayer.data.foreach_get("uv", t_luv)
+            # NaN values are considered invalid and indicate a bug somewhere else in Blender or in an addon, we want
+            # these bugs to be reported instead of hiding them by allowing the export to continue.
+            nan_uv = numpy.isnan(t_luv)
+            if nan_uv.any():
+                # UVs are two-element vectors, to get the indices within uvlayer, the elements must be viewed as pairs
+                nan_indices = numpy.flatnonzero(numpy.any(nan_uv.reshape(-1, 2), axis=1))
+                # Print the indices of the UVs that are invalid only to the console to avoid showing the user a possibly
+                # very large error message.
+                # Numpy will print up to 1000 elements by default, after which it will print a summarization instead.
+                print(f"UV layer {uvlayer.name} on {me!r} has invalid UVs containing NaN values at the indices"
+                      f" {nan_indices}")
+                # And then raise the error without including the indices of invalid UVs.
+                raise RuntimeError(f"UV layer {uvlayer.name} on {me!r} has invalid UVs containing NaN values")
+            del nan_uv
             lay_uv = elem_data_single_int32(geom, b"LayerElementUV", uvindex)
             elem_data_single_int32(lay_uv, b"Version", FBX_GEOMETRY_UV_VERSION)
             elem_data_single_string_unicode(lay_uv, b"Name", uvlayer.name)
