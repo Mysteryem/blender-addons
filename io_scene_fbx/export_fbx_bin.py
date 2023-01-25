@@ -1376,6 +1376,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             nbr_mats = len(me_fbxmaterials_idx)
             if nbr_mats > 1:
                 bl_pm_dtype = numpy.uintc
+                fbx_pm_dtype = numpy.int32
                 t_pm = numpy.empty(len(me.polygons), dtype=bl_pm_dtype)
                 me.polygons.foreach_get("material_index", t_pm)
 
@@ -1393,7 +1394,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
                 # Map to FBX indices. Materials not in me_fbxmaterials_idx will be set to the default material index.
                 blmat_fbx_idx = numpy.fromiter((me_fbxmaterials_idx.get(m, def_ma) for m in me_blmaterials),
-                                               dtype=numpy.int32)
+                                               dtype=fbx_pm_dtype)
                 t_pm = blmat_fbx_idx[t_pm]
 
                 elem_data_single_string(lay_ma, b"MappingInformationType", b"ByPolygon")
