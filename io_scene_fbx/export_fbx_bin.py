@@ -1310,8 +1310,6 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         unique_triplet_dtype = numpy.dtype([('', t_luv.dtype), ('', t_luv.dtype), ('', t_lvidx.dtype)])
         # but since we only care about uniqueness and not order (numpy.unique also sorts), it's faster to treat each
         # triplet as raw byte data of the same size.
-        # Note that this will cause NaN uv components to be considered the same when it comes to uniqueness, whereas
-        # .unique would usually consider every NaN value to be different (can be disabled as of Numpy 1.24)
         unique_triplet_dtype = f'V{unique_triplet_dtype.itemsize}'
         single_raw_byte_dtype = 'V1'
 
