@@ -351,7 +351,9 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
         # ┊ …,  …,  …, …┊
         # └xn, yn, zn, 1┘
 
-        # There's no, or negligible, performance difference between the two options.
+        # There's no, or negligible, performance difference between the two options, however, the result of the latter
+        # will be C contiguous in memory, making it faster to convert to bytes with result_4d.tobytes().
+        # A 3d view of either option won't be C contiguous in memory, so it only makes a difference when returning 4d.
 
         # First option:
         # result_4d_T = (mat4_np @ vec4_array.T)
