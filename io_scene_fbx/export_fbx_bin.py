@@ -1226,7 +1226,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Binormals",
                                                        nors_transformed(t_ln, geom_mat_no)
-                                                       .astype(numpy.float64, copy=False))
+                                                       .astype(ln_fbx_dtype, copy=False))
                         # Binormal weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"BinormalsW", t_lnw)
 
@@ -1240,7 +1240,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Tangents",
                                                        nors_transformed(t_ln, geom_mat_no)
-                                                       .astype(numpy.float64, copy=False))
+                                                       .astype(ln_fbx_dtype, copy=False))
                         # Tangent weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"TangentsW", t_lnw)
 
