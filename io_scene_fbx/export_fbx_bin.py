@@ -1166,7 +1166,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
             # Convert the types for fbx
             t_ln = t_ln.astype(ln_fbx_dtype, copy=False)
-            t_lnidx = astype_view_signedness(t_lnidx, lnidx_fbx_dtype)
+            t_lnidx = t_lnidx.astype(lnidx_fbx_dtype, copy=False)
 
             elem_data_single_float64_array(lay_nor, b"Normals", t_ln)
             # Normal weights, no idea what it is.
