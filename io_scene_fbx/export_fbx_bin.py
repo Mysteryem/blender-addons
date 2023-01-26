@@ -1261,7 +1261,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
         for colindex, collayer in enumerate(me.color_attributes):
             is_point = collayer.domain == "POINT"
-            vcollen = len(me.vertices) if is_point else len(me.loops)
+            vcollen = len(me.vertices if is_point else me.loops)
             # Each rgba component is flattened in the array
             t_lc = numpy.empty(vcollen * 4, dtype=bl_lc_dtype)
             collayer.data.foreach_get(color_prop_name, t_lc)
