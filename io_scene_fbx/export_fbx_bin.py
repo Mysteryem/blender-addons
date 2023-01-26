@@ -886,17 +886,11 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
     # Vertex cos.
     co_bl_dtype = numpy.single
-    t_co = numpy.empty(len(me.vertices) * 3, dtype=co_bl_dtype)
-    # When a mesh has shape keys, the reference shape key and the vertices of the mesh can become desynchronized. The
-    # reference shape key is what users see within Blender, so export the vertex cos based on the reference shape key.
-    if me.shape_keys:
-        me.shape_keys.reference_key.data.foreach_get("co", t_co)
-    else:
-        me.vertices.foreach_get("co", t_co)
-    t_co = vcos_transformed(t_co, geom_mat_co)
     co_fbx_dtype = numpy.float64
-    t_co = t_co.astype(co_fbx_dtype, copy=False)
-    elem_data_single_float64_array(geom, b"Vertices", t_co)
+    t_co = numpy.empty(len(me.vertices) * 3, dtype=co_bl_dtype)
+    me.vertices.foreach_get("co", t_co)
+    elem_data_single_float64_array(geom, b"Vertices",
+                                   vcos_transformed(t_co, geom_mat_co).astype(co_fbx_dtype, copy=False))
     del t_co
 
     # Polygon indices.
@@ -2589,11 +2583,16 @@ def fbx_data_from_scene(scene, depsgraph, settings):
 
         shapes_key = get_blender_mesh_shape_key(me)
 
+        sk_base = me.shape_keys.key_blocks[0]
+
         # Get and cache only the cos that we need
         @cache
         def sk_cos(shape_key):
             _cos = numpy.empty(len(me.vertices) * 3, dtype=co_bl_dtype)
-            shape_key.data.foreach_get("co", _cos)
+            if shape_key == sk_base:
+                me.vertices.foreach_get("co", _cos)
+            else:
+                shape_key.data.foreach_get("co", _cos)
             return vcos_transformed(_cos, geom_mat_co)
 
         for shape in me.shape_keys.key_blocks[1:]:
