@@ -790,7 +790,7 @@ def fbx_data_mesh_shapes_elements(root, me_obj, me, scene_data, fbx_me_tmpl, fbx
         elem_data_single_float64_array(geom, b"Vertices", shape_verts_co)
         if write_normals:
             elem_data_single_float64_array(geom, b"Normals",
-                                           array.array(data_types.ARRAY_FLOAT64, (0.0,)) * len(shape_verts_idx))
+                                           array.array(data_types.ARRAY_FLOAT64, (0.0,)) * (len(shape_verts_idx) * 3))
 
     # Yiha! BindPose for shapekeys too! Dodecasigh...
     # XXX Not sure yet whether several bindposes on same mesh are allowed, or not... :/
