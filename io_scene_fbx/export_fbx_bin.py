@@ -919,6 +919,10 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     # Vertex indices of edges (unsorted, unlike Mesh.edge_keys), flattened into an array twice the length of the number
     # of edges.
     t_ev = numpy.empty(len(me.edges) * 2, dtype=bl_vertex_index_dtype)
+    # Each edge has two vertex indices, so it's useful to view the array as 2d where each element on the first axis is a
+    # pair of vertex indices
+    t_ev_pair_view = t_ev.view()
+    t_ev_pair_view.shape = (-1, 2)
 
     # Edge indices of loops. May contain elements for loops added for the export of loose edges.
     t_lei = numpy.empty(len(me.loops), dtype=bl_edge_index_dtype)
@@ -939,9 +943,6 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         # Since we add two loops per loose edge, repeat the indices so that there's one for each new loop
         new_loop_edge_indices = numpy.repeat(indices_of_loose_edges, 2)
 
-        # View the edge vertex indices as pairs, since there are two per edge and the mask is per edge
-        t_ev_pair_view = t_ev
-        t_ev_pair_view.shape = (-1, 2)
         # Get the loose edge vertex index pairs
         t_le = t_ev_pair_view[loose_mask]
 
@@ -953,7 +954,6 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         t_ls = numpy.append(t_ls, numpy.arange(len(me.loops), loop_nbr, 2, dtype=t_ls.dtype))
         del t_le
         del loose_mask
-        del t_ev_pair_view
         del indices_of_loose_edges
         del new_loop_edge_indices
 
@@ -976,9 +976,6 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         loop_end_indices = numpy.append(t_ls[1:], len(t_lvi)) - 1
 
         # Get unsorted edge keys by indexing the edge->vertex-indices array by the loop->edge-index array
-        # View the edge vertices array as pairs since there are two per edge
-        t_ev_pair_view = t_ev.view()
-        t_ev_pair_view.shape = (-1, 2)
         t_pvi_edge_keys = t_ev_pair_view[t_lei]
 
         # Sort each [edge_start_n, edge_end_n] pair to get edge keys
@@ -1008,7 +1005,6 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         t_pvi[loop_end_indices] ^= -1
         del t_pvi_edge_keys
         del _unique_pvi_edge_keys_raw
-        del t_ev_pair_view
         del loop_end_indices
     else:
         # Should be empty, but make sure it's the correct type
@@ -1023,6 +1019,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     del t_pvi
     del t_eli
     del t_ev
+    del t_ev_pair_view
 
     # And now, layers!
 
