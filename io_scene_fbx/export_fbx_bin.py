@@ -1038,57 +1038,63 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             if t_pvi_edge_indices.size:
                 # Write Edge Smoothing.
                 # Note edge is sharp also if it's used by more than two faces, or one of its faces is flat.
+                mesh_poly_nbr = len(me.polygons)
+                mesh_edge_nbr = len(me.edges)
+                mesh_loop_nbr = len(me.loops)
+                # t_ls and t_lei may contain extra polygons or loops added for loose edges that are not present in the
+                # mesh data, so create views that exclude the extra data added for loose edges.
+                mesh_t_ls_view = t_ls[:mesh_poly_nbr]
+                mesh_t_lei_view = t_lei[:mesh_loop_nbr]
 
                 # - Get sharp edges from flat shaded faces
-                # Element-wise difference of loop starts appended by the number of loops gets the number of sides of
-                # each polygon
-                # (Alternatively, can be retrieved directly from the 'loop_total' attribute of polygons)
-                # Only get the first mesh_poly_nbr loop_start indices, because we might have added extra polygons for
-                # loose edges that don't exist in the mesh itself
-                polygon_sides = numpy.diff(t_ls[:len(me.polygons)], append=(len(me.loops)))
-                # Get the 'use_smooth' attribute of all polygons
-                p_use_smooth = numpy.empty(len(me.polygons), dtype=poly_use_smooth_dtype)
-                me.polygons.foreach_get('use_smooth', p_use_smooth)
-                # Invert to get all flat shaded polygons
-                p_flat = numpy.invert(p_use_smooth, out=p_use_smooth)
-                # Duplicate the corresponding element of each polygon according to the number of sides of that polygon
-                # to get a mask of flat loop indices
-                p_flat_loop_indices_mask = numpy.repeat(p_flat, polygon_sides)
-                # Extract all edges belonging to polygons with flat shading
-                # Because t_lei could have edge indices for extra loops added for loose edges, only get the first
-                # mesh_loop_nbr edge indices.
-                # Note that if an edge is in multiple loops that are part of flat shaded faces, its index will end up in
-                # sharp_edge_indices_from_polygons multiple times.
-                sharp_edge_indices_from_polygons = t_lei[:len(me.loops)][p_flat_loop_indices_mask]
+                # Get the 'use_smooth' attribute of all polygons.
+                p_use_smooth_mask = numpy.empty(mesh_poly_nbr, dtype=poly_use_smooth_dtype)
+                me.polygons.foreach_get('use_smooth', p_use_smooth_mask)
+                # Invert to get all flat shaded polygons.
+                p_flat_mask = numpy.invert(p_use_smooth_mask, out=p_use_smooth_mask)
+                # Convert flat shaded polygons to flat shaded loops by repeating each element by the number of sides of
+                # that polygon.
+                # Polygon sides can be calculated from the element-wise difference of loop starts appended by the number
+                # of loops. Alternatively, polygon sides can be retrieved directly from the 'loop_total' attribute of
+                # polygons, but since we already have t_ls, it tends to be quicker to calculate from t_ls when above
+                # around 10_000 polygons.
+                polygon_sides = numpy.diff(mesh_t_ls_view, append=mesh_loop_nbr)
+                p_flat_loop_mask = numpy.repeat(p_flat_mask, polygon_sides)
+                # Convert flat shaded loops to flat shaded (sharp) edge indices.
+                # Note that if an edge is in multiple loops that are part of flat shaded faces, its edge index will end
+                # up in sharp_edge_indices_from_polygons multiple times.
+                sharp_edge_indices_from_polygons = mesh_t_lei_view[p_flat_loop_mask]
 
                 # - Get sharp edges from edges marked as sharp
-                e_use_sharp = numpy.empty(len(me.edges), dtype=edge_use_sharp_dtype)
-                me.edges.foreach_get('use_edge_sharp', e_use_sharp)
+                e_use_sharp_mask = numpy.empty(mesh_edge_nbr, dtype=edge_use_sharp_dtype)
+                me.edges.foreach_get('use_edge_sharp', e_use_sharp_mask)
 
-                # - Get sharp edges from edges used by more than two loops (and thus more than two faces)
-                sharp_edges_from_more_than_two_faces = numpy.bincount(t_lei, minlength=(len(me.edges))) > 2
+                # - Get sharp edges from edges used by more than two loops (and therefore more than two faces)
+                e_more_than_two_faces_mask = numpy.bincount(mesh_t_lei_view, minlength=mesh_edge_nbr) > 2
 
                 # - Combine with edges that are sharp because they're in more than two faces
-                e_use_sharp = numpy.logical_or(e_use_sharp, sharp_edges_from_more_than_two_faces, out=e_use_sharp)
+                e_use_sharp_mask = numpy.logical_or(e_use_sharp_mask, e_more_than_two_faces_mask, out=e_use_sharp_mask)
 
                 # - Combine with edges that are sharp because a polygon they're in has flat shading
-                e_use_sharp[sharp_edge_indices_from_polygons] = True
+                e_use_sharp_mask[sharp_edge_indices_from_polygons] = True
 
                 # - Convert sharp edges to sharp edge keys (t_pvi)
-                ek_use_sharp = e_use_sharp[t_pvi_edge_indices]
+                ek_use_sharp_mask = e_use_sharp_mask[t_pvi_edge_indices]
 
                 # - Sharp edges are indicated in FBX as zero (False), so invert
-                t_ps = numpy.invert(ek_use_sharp, out=ek_use_sharp)
-                del ek_use_sharp
-                del e_use_sharp
+                t_ps = numpy.invert(ek_use_sharp_mask, out=ek_use_sharp_mask)
+                del ek_use_sharp_mask
+                del e_use_sharp_mask
                 del sharp_edge_indices_from_polygons
-                del p_flat_loop_indices_mask
-                del p_flat
-                del p_use_smooth
+                del p_flat_loop_mask
                 del polygon_sides
+                del p_flat_mask
+                del p_use_smooth_mask
+                del mesh_t_lei_view
+                del mesh_t_ls_view
             else:
                 t_ps = numpy.empty(0, dtype=ps_fbx_dtype)
-        t_ps = astype_view_signedness(t_ps, ps_fbx_dtype)
+        t_ps = t_ps.astype(ps_fbx_dtype, copy=False)
         lay_smooth = elem_data_single_int32(geom, b"LayerElementSmoothing", 0)
         elem_data_single_int32(lay_smooth, b"Version", FBX_GEOMETRY_SMOOTHING_VERSION)
         elem_data_single_string(lay_smooth, b"Name", b"")
