@@ -966,8 +966,9 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     #       We also have to store a mapping from real edges to their indices in this array, for edge-mapped data
     #       (like e.g. crease).
     eli_fbx_dtype = numpy.int32
+
+    # Edge index of each unique edge-key, used to map per-edge data to unique edge-keys (t_pvi)
     t_pvi_edge_indices = numpy.empty(0, dtype=t_lei.dtype)
-    """Edge index of each unique edge-key, used to map per-edge data to unique edge-keys (t_pvi)"""
 
     pvi_fbx_dtype = numpy.int32
     if t_ls.size and t_lvi.size:
