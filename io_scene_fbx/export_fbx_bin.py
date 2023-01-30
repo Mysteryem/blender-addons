@@ -905,10 +905,11 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     #
     # Note we have to process Edges in the same time, as they are based on poly's loops...
 
-    # Total number of loops, including any extra added for loose edges
+    # Total number of loops, including any extra added for loose edges.
     loop_nbr = len(me.loops)
 
-    # dtypes matching the C data
+    # dtypes matching the C data. Matching the C datatype avoids iteration and casting of every element in foreach_get's
+    # C code.
     bl_vertex_index_dtype = bl_edge_index_dtype = bl_loop_index_dtype = numpy.uintc
 
     # Start vertex indices of loops. May contain elements for loops added for the export of loose edges.
@@ -968,23 +969,23 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     #       (like e.g. crease).
     eli_fbx_dtype = numpy.int32
 
-    # Edge index of each unique edge-key, used to map per-edge data to unique edge-keys (t_pvi)
+    # Edge index of each unique edge-key, used to map per-edge data to unique edge-keys (t_pvi).
     t_pvi_edge_indices = numpy.empty(0, dtype=t_lei.dtype)
 
     pvi_fbx_dtype = numpy.int32
     if t_ls.size and t_lvi.size:
-        # The index of the end of each loop is one before the start of the next loop
-        # The index of the end of the last loop will be the very last index
+        # The index of the end of each loop is one before the start of the next loop.
+        # The index of the end of the last loop will be the very last index.
         loop_end_indices = numpy.append(t_ls[1:], len(t_lvi)) - 1
 
-        # Get unsorted edge keys by indexing the edge->vertex-indices array by the loop->edge-index array
+        # Get unsorted edge keys by indexing the edge->vertex-indices array by the loop->edge-index array.
         t_pvi_edge_keys = t_ev_pair_view[t_lei]
 
-        # Sort each [edge_start_n, edge_end_n] pair to get edge keys
+        # Sort each [edge_start_n, edge_end_n] pair to get edge keys.
         t_pvi_edge_keys.sort(axis=1)
 
         # Since we're finding unique edge keys, if there are multiple edges that share the same vertices (which
-        # shouldn't normally happen), only the first edge found in loops will be exported along with its crease/sharp
+        # shouldn't normally happen), only the first edge found in loops will be exported along with its crease/sharp.
         # To export separate edges that share the same vertices, .unique can be run with t_lei as the first argument and
         # without the axis argument, finding unique edges rather than unique edge keys.
         #
@@ -993,14 +994,14 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         _unique_pvi_edge_keys_raw, indices_of_first_found = (
             numpy.unique(t_pvi_edge_keys.view(f'V{t_pvi_edge_keys.itemsize * 2}'), return_index=True))
 
-        # Indices of the elements in t_pvi_edge_keys that produce unique_edges_map_keys_sorted but in the original order
+        # Indices of the elements in t_pvi_edge_keys that produce _unique_pvi_edge_keys_raw but in the original order.
         t_eli = numpy.sort(indices_of_first_found)
 
-        # Edge index of each element in unique t_pvi_edge_keys, used to map per-edge data such as sharp and creases
+        # Edge index of each element in unique t_pvi_edge_keys, used to map per-edge data such as sharp and creases.
         t_pvi_edge_indices = t_lei[t_eli]
 
         # Ensure t_pvi is the correct number of bits before inverting each loop end index.
-        # We always create a copy so that t_lvi doesn't get modified in the next step
+        # We always create a copy so that t_lvi doesn't get modified in the next step.
         t_pvi = t_lvi.astype(pvi_fbx_dtype)
 
         # We have to ^-1 last index of each loop.
@@ -1009,7 +1010,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         del _unique_pvi_edge_keys_raw
         del loop_end_indices
     else:
-        # Should be empty, but make sure it's the correct type
+        # Should be empty, but make sure it's the correct type.
         t_pvi = numpy.empty(0, dtype=pvi_fbx_dtype)
         t_eli = numpy.empty(0, dtype=eli_fbx_dtype)
 
@@ -1115,12 +1116,12 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             t_ec_raw = numpy.empty(len(me.edges), dtype=ec_bl_dtype)
             me.edges.foreach_get('crease', t_ec_raw)
 
-            # Convert to t_pvi edge-keys
+            # Convert to t_pvi edge-keys.
             t_ec_ek_raw = t_ec_raw[t_pvi_edge_indices]
 
             # Blender squares those values before sending them to OpenSubdiv, when other software don't,
             # so we need to compensate that to get similar results through FBX...
-            # Use the precision of the fbx dtype for the calculation
+            # Use the precision of the fbx dtype for the calculation since it's usually higher precision.
             t_ec_ek_raw = t_ec_ek_raw.astype(ec_fbx_dtype, copy=False)
             t_ec = numpy.square(t_ec_ek_raw, out=t_ec_ek_raw)
             del t_ec_ek_raw
