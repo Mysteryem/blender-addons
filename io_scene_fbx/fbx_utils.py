@@ -318,11 +318,12 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
         else:
             return vec3_array
 
+    # Shortcuts can usually be taken if there is no translation component to the matrix
     no_translation = mat4.translation == Vector((0, 0, 0))
     # The matrix is expected to represent an affine transformation, not a projective transformation
     is_affine = mat4[3] == Vector((0, 0, 0, 1))
     if no_translation and (is_affine or not return_4d):
-        # If there's no translation, and we're either returning 4d or the matrix represents an affine transformation, we
+        # If there's no translation, and we're either returning 3d or the matrix represents an affine transformation, we
         # can use 3d math
 
         # Convert the matrix to numpy with the same dtype as the vectors
@@ -357,6 +358,9 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
         result_3d = vec3_array @ mat3_np.T
 
         if return_4d:
+            # If the full 4x4 matrix had been used with vectors extended to 4d by inserting 1.0 at the end of each
+            # vector, the w component of each multiplied vector would simply be 1.0*1.0 because the matrix represents an
+            # affine transformation.
             index_to_insert_before = 3
             value_to_insert = 1.0
             return numpy.insert(result_3d, index_to_insert_before, value_to_insert, axis=1)
@@ -376,18 +380,11 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
         mat4_np = numpy.array(mat4, dtype=vec4_array.dtype)
 
         if return_4d:
-            if is_affine:
-                # TODO: While we can do this, it seems to end up slower
-                # The last row of the matrix only affects the w component of the vectors and is (0, 0, 0, 1) because it
-                # represents an affine transformation. The w component of every vector is 1.0, so the w component of
-                # the matrix multiplied vectors will also be 1.0. Since we know the w component in advance, we can
-                # ignore the last row of the matrix in the multiplication and then insert 1.0 at the end of each vector.
-                result_3d = vec4_array @ mat4_np[:3].T
-                index_to_insert_before = 3
-                value_to_insert = 1.0
-                return numpy.insert(result_3d, index_to_insert_before, value_to_insert, axis=1)
-            else:
-                return vec4_array @ mat4_np.T
+            # With an affine transformation matrix, the w component of every multiplied vector would be 1.0, so we could
+            # ignore the last row of the matrix to produce an array of 3d vectors and then insert 1.0 at the end of each
+            # multiplied vector, but having to call .insert a second time tends to be slower than simply doing the full
+            # 4x4 matrix multiplication after the initial .insert call.
+            return vec4_array @ mat4_np.T
         else:
             # The last row of the matrix only affects the w component of the vectors, but we're returning 3d, so ignore
             # the last row.
