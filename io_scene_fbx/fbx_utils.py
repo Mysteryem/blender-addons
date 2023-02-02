@@ -309,63 +309,89 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
     """Multiply a 4d matrix by each 3d vector in an array and return as an array of either 3d or 4d vectors.
     Returns a view of the input array if no multiplication or increase in dimensions is required and the input array can
     be viewed in the shape of one vector per row."""
+    vec3_array = vec3_array.reshape(-1, 3)
     if mat4 is None:
         if return_4d:
             index_to_insert_before = 3
             value_to_insert = 1.0
-            return numpy.insert(vec3_array.reshape(-1, 3), index_to_insert_before, value_to_insert, axis=1)
+            return numpy.insert(vec3_array, index_to_insert_before, value_to_insert, axis=1)
         else:
-            return vec3_array.reshape(-1, 3)
+            return vec3_array
+
+    no_translation = mat4.translation == Vector((0, 0, 0))
+    # The matrix is expected to represent an affine transformation, not a projective transformation
+    is_affine = mat4[3] == Vector((0, 0, 0, 1))
+    if no_translation and (is_affine or not return_4d):
+        # If there's no translation, and we're either returning 4d or the matrix represents an affine transformation, we
+        # can use 3d math
+
+        # Convert the matrix to numpy with the same dtype as the vectors
+        mat3_np = numpy.array(mat4.to_3x3(), dtype=vec3_array.dtype)
+
+        # Currently, the arrangement of the vectors and the matrix cannot be multiplied, one of them must be transposed
+        # ┌a, b, c┐   ┌x1, y1, z1┐
+        # │d, e, f│ ? │x2, y2, z2│
+        # └g, h, i┘   │x3, y3, z3│
+        #             ┊ …,  …,  …┊
+        #             └xn, yn, zn┘
+        # Can transpose vec4_array which gives a result with the shape (3, len(vec3_array)):
+        # ┌a, b, c┐   ┌x1, x2, x3, x4, …, xn┐
+        # │d, e, f│ @ │y1, y2, y3, y4, …, yn│
+        # └g, h, i┘   └z1, z2, z3, z4, …, zn┘
+        # Or transpose the matrix and swap the order of multiplication which gives a result with shape
+        # (len(vec3_array), 3)):
+        # ┌x1, y1, z1┐   ┌a, d, g┐
+        # │x2, y2, z2│ @ │b, e, h│
+        # │x3, y3, z3│   └c, f, i┘
+        # │x4, y4, z4│
+        # ┊ …,  …,  …┊
+        # └xn, yn, zn┘
+
+        # There's no, or negligible, performance difference between the two options, however, the result of the latter
+        # will be C contiguous in memory, making it faster to convert to bytes with result_3d.tobytes().
+
+        # First option:
+        # result_3d_T = mat3_np @ vec3_array.T
+        # result_3d = result_3d_T.T
+        # Second option:
+        result_3d = vec3_array @ mat3_np.T
+
+        if return_4d:
+            index_to_insert_before = 3
+            value_to_insert = 1.0
+            return numpy.insert(result_3d, index_to_insert_before, value_to_insert, axis=1)
+        else:
+            return result_3d
     else:
-        vec3_array = vec3_array.reshape(-1, 3)
         # Multiplying a 4d mathutils.Matrix by a 3d mathutils.Vector implicitly extends the Vector to 4d by appending
         # 1.0 to the Vector and then the 4d result is truncated back to 3d.
         # Numpy does not do this implicitly, so it must be done manually.
 
-        # Get a copy of raw_nors_vector64, but with 1.0 inserted at the end of each vector
+        # Get a copy of vec3_array, but with 1.0 inserted at the end of each vector
         index_to_insert_before = 3
         value_to_insert = 1.0
         vec4_array = numpy.insert(vec3_array, index_to_insert_before, value_to_insert, axis=1)
 
-        # Convert the matrix to numpy
-        mat4_np = numpy.array(mat4, dtype=vec3_array.dtype)
-
-        # Currently, the arrangement of the vectors and the matrix cannot be multiplied, one of them must be transposed
-        # ┌a, b, c, d┐   ┌x1, y1, z1, 1┐
-        # │e, f, g, h│ ? │x2, y2, z2, 1│
-        # │i, j, k, l│   │x3, y3, z3, 1│
-        # └m, n, o, p┘   │x4, y4, z4, 1│
-        #                ┊ …,  …,  …, …┊
-        #                └xn, yn, zn, 1┘
-        # Can transpose vec4_array which gives a result with the shape (4, len(vec4_array)):
-        # ┌a, b, c, d┐   ┌x1, x2, x3, x4, …, xn┐
-        # │e, f, g, h│ @ │y1, y2, y3, y4, …, yn│
-        # │i, j, k, l│   │z1, z2, z3, z4, …, zn│
-        # └m, n, o, p┘   └ 1,  1,  1,  1, …,  1┘
-        # Or transpose the matrix and swap the order of multiplication which gives a result with shape
-        # (len(vec4_array), 4)):
-        # ┌x1, y1, z1, 1┐   ┌a, e, i, m┐
-        # │x2, y2, z2, 1│   │b, f, j, n│
-        # │x3, y3, z3, 1│ @ │c, g, k, o│
-        # │x4, y4, z4, 1│   └d, h, l, p┘
-        # ┊ …,  …,  …, …┊
-        # └xn, yn, zn, 1┘
-
-        # There's no, or negligible, performance difference between the two options, however, the result of the latter
-        # will be C contiguous in memory, making it faster to convert to bytes with result_4d.tobytes().
-        # A 3d view of either option won't be C contiguous in memory, so it only makes a difference when returning 4d.
-
-        # First option:
-        # result_4d_T = (mat4_np @ vec4_array.T)
-        # result_4d = result_4d_T.T
-        # Second option:
-        result_4d = (vec4_array @ mat4_np.T)
+        # Convert the matrix to numpy with the same dtype as the vectors
+        mat4_np = numpy.array(mat4, dtype=vec4_array.dtype)
 
         if return_4d:
-            return result_4d
+            if is_affine:
+                # TODO: While we can do this, it seems to end up slower
+                # The last row of the matrix only affects the w component of the vectors and is (0, 0, 0, 1) because it
+                # represents an affine transformation. The w component of every vector is 1.0, so the w component of
+                # the matrix multiplied vectors will also be 1.0. Since we know the w component in advance, we can
+                # ignore the last row of the matrix in the multiplication and then insert 1.0 at the end of each vector.
+                result_3d = vec4_array @ mat4_np[:3].T
+                index_to_insert_before = 3
+                value_to_insert = 1.0
+                return numpy.insert(result_3d, index_to_insert_before, value_to_insert, axis=1)
+            else:
+                return vec4_array @ mat4_np.T
         else:
-            # Return a view that excludes the fourth dimension of each vector
-            return result_4d[:, :3]
+            # The last row of the matrix only affects the w component of the vectors, but we're returning 3d, so ignore
+            # the last row.
+            return vec4_array @ mat4_np[:3].T
 
 
 def vcos_transformed(raw_cos, m=None):
