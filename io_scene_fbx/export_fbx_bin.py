@@ -757,6 +757,7 @@ def fbx_data_mesh_shapes_elements(root, me_obj, me, scene_data, fbx_me_tmpl, fbx
 
     channels = []
 
+    vertices = me.vertices
     for shape, (channel_key, geom_key, shape_verts_co, shape_verts_idx) in shapes.items():
         # Use vgroups as weights, if defined.
         if shape.vertex_group and shape.vertex_group in me_obj.bdata.vertex_groups:
@@ -764,14 +765,12 @@ def fbx_data_mesh_shapes_elements(root, me_obj, me, scene_data, fbx_me_tmpl, fbx
             # We get slightly faster iteration and indexing using the underlying memoryview objects
             weights_memoryview = shape_verts_weights.data
             idx_memoryview = shape_verts_idx.data
-            get_weight_func = me_obj.bdata.vertex_groups[shape.vertex_group].weight
+            vg_idx = me_obj.bdata.vertex_groups[shape.vertex_group].index
             for sk_idx, v_idx in enumerate(idx_memoryview):
-                try:
-                    weight = get_weight_func(v_idx)
-                except RuntimeError:
-                    # Vertex not in group
-                    continue
-                weights_memoryview[sk_idx] = weight
+                for vg in vertices[v_idx].groups:
+                    if vg.group == vg_idx:
+                        weights_memoryview[sk_idx] = vg.weight
+                        break
             shape_verts_weights *= 100.0
         else:
             shape_verts_weights = numpy.full(len(shape_verts_idx), 100.0, dtype=numpy.float64)
@@ -2616,6 +2615,7 @@ def fbx_data_from_scene(scene, depsgraph, settings):
                 sv_cos = sk_cos(shape)
                 ref_cos = sk_cos(shape.relative_key)
 
+                # Exclude cos similar to ref_cos and get the indices of the cos that remain
                 shape_verts_co, shape_verts_idx = shape_difference_exclude_similar(sv_cos, ref_cos)
 
                 # Ensure the arrays are of the correct type
