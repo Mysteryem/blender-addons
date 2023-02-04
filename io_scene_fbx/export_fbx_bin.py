@@ -1340,10 +1340,10 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # Print the indices of the UVs that are invalid only to the console to avoid showing the user a possibly
                 # very large error message.
                 # Numpy will print up to 1000 elements by default, after which it will print a summarization instead.
-                print(f"UV layer {uvlayer.name} on {me!r} has invalid UVs containing NaN values at the indices"
-                      f" {nan_indices}")
+                print("UV layer %s on %r has invalid UVs containing NaN values at the indices %s"
+                      % (uvlayer.name, me, nan_indices))
                 # And then raise the error without including the indices of invalid UVs.
-                raise RuntimeError(f"UV layer {uvlayer.name} on {me!r} has invalid UVs containing NaN values")
+                raise RuntimeError("UV layer %s on %r has invalid UVs containing NaN values" % (uvlayer.name, me))
             del nan_uv
             lay_uv = elem_data_single_int32(geom, b"LayerElementUV", uvindex)
             elem_data_single_int32(lay_uv, b"Version", FBX_GEOMETRY_UV_VERSION)
