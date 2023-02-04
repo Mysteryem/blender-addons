@@ -986,11 +986,12 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         #
         # Since we don't care about sorting, we can pass t_pvi_edge_keys in as raw data (with each element being a
         # single edge key) for a performance boost
-        _unique_pvi_edge_keys_raw, indices_of_first_found = (
+        _unique_pvi_edge_keys_raw, t_eli = (
             numpy.unique(t_pvi_edge_keys.view(f'V{t_pvi_edge_keys.itemsize * 2}'), return_index=True))
 
-        # Indices of the elements in t_pvi_edge_keys that produce _unique_pvi_edge_keys_raw but in the original order.
-        t_eli = numpy.sort(indices_of_first_found)
+        # Indices of the elements in t_pvi_edge_keys that produce _unique_pvi_edge_keys_raw. To get the indices in the
+        # original order of t_pvi_edge_keys, they must be sorted.
+        t_eli.sort()
 
         # Edge index of each element in unique t_pvi_edge_keys, used to map per-edge data such as sharp and creases.
         t_pvi_edge_indices = t_lei[t_eli]
