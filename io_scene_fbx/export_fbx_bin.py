@@ -973,10 +973,6 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
     pvi_fbx_dtype = numpy.int32
     if t_ls.size and t_lvi.size:
-        # The index of the end of each loop is one before the start of the next loop.
-        # The index of the end of the last loop will be the very last index.
-        loop_end_indices = numpy.append(t_ls[1:], len(t_lvi)) - 1
-
         # Get unsorted edge keys by indexing the edge->vertex-indices array by the loop->edge-index array.
         t_pvi_edge_keys = t_ev_pair_view[t_lei]
 
@@ -1004,6 +1000,10 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         t_pvi = t_lvi.astype(pvi_fbx_dtype)
 
         # We have to ^-1 last index of each loop.
+        # The index of the end of each loop is one before the start of the next loop.
+        # The index of the end of the last loop will be the very last index.
+        # Since the first loop start index is always 0, it will become -1, which conveniently indexes the last element.
+        loop_end_indices = t_ls - 1
         t_pvi[loop_end_indices] ^= -1
         del t_pvi_edge_keys
         del _unique_pvi_edge_keys_raw
