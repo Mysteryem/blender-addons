@@ -1312,12 +1312,15 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         # Looks like this mapping is also expected to convey UV islands (arg..... :((((( ).
         # So we need to generate unique triplets (uv, vertex_idx) here, not only just based on UV values.
 
-        # We could combine the data together and view as a triplet such as
-        unique_triplet_dtype = numpy.dtype([('', t_luv.dtype), ('', t_luv.dtype), ('', t_lvidx.dtype)])
-        # but since we only care about uniqueness and not order (numpy.unique also sorts), it's faster to treat each
+        # The uv components and vertex index can be combined and viewed as a structured type triplet such as
+        triplet_dtype = numpy.dtype([("u", t_luv.dtype), ("v", t_luv.dtype), ("vidx", t_lvidx.dtype)])
+        # but since only uniqueness is required and not sorting, it's faster to find unique triplets by treating each
         # triplet as raw byte data of the same size.
-        unique_triplet_dtype = f'V{unique_triplet_dtype.itemsize}'
-        single_raw_byte_dtype = 'V1'
+        triplet_byte_dtype = "V%d" % triplet_dtype.itemsize
+        single_raw_byte_dtype = "V1"
+
+        # Create structured type for only "u" and "v" where each field uses the fbx type, used for simultaneously
+        luv_fbx_structured_type = numpy.dtype([("u", luv_fbx_dtype.dtype), ("v", luv_fbx_dtype.dtype)])
 
         # Since the t_luv and t_lvidx arrays are different types, we have to view them as the same type to easily join
         # them together.
@@ -1353,28 +1356,32 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
             # Stack both arrays (viewed as raw bytes) into a single array and view as triplets of raw bytes
             # If each uv component and idx was a single byte, it would look something like this:
-            # [[u0,v0],       [[idx0],    [[u0,v0,idx0],                                [[triplet0],
-            #  [u1,v1], stack  [idx1], ->  [u1,v1,idx1],  view(unique_triplet_dtype) ->  [triplet1],
-            #    ...             ...           ...                                          ...
-            #  [un,vn]]        [idxn]]     [un,vn,idxn]]                                 [tripletn]]
-            triplets = numpy.column_stack((t_luv_byte_view, t_lvidx_byte_view)).view(unique_triplet_dtype)
+            # [[u0,v0],       [[idx0],    [[u0,v0,idx0],                              [[triplet0],
+            #  [u1,v1], stack  [idx1], ->  [u1,v1,idx1],  view(triplet_byte_dtype) ->  [triplet1],
+            #    ...             ...           ...                                        ...
+            #  [un,vn]]        [idxn]]     [un,vn,idxn]]                               [tripletn]]
+            triplets = numpy.column_stack((t_luv_byte_view, t_lvidx_byte_view)).view(triplet_byte_dtype)
 
-            # .unique without an axis argument will flatten the input triplet array to 1d
-            _unique_triplets, unique_indices, uv_indices = numpy.unique(
-                triplets, return_index=True, return_inverse=True)
+            # .unique without an axis argument flattens the input triplet array to 1d
+            unique_triplets, uv_indices = numpy.unique(triplets, return_inverse=True)
 
-            # It's much simpler to construct the uv pairs from the unique indices than it is to extract the uv pairs
-            # from _unique_triplets and the performance difference is negligible
-            unique_uv_pairs = t_luv.reshape(-1, 2)[unique_indices]
+            # Extract only the uvs from unique_triplets
+            # Create multi-field view of only "u" and "v". Note that there are padding bytes for the unindexed "vidx"
+            # field, so viewing as t_luv.dtype is not possible because it would include those padding bytes in the view.
+            unique_uv_pairs = unique_triplets.view(triplet_dtype)[["u", "v"]]
+            # Convert to structured datatype matching the fbx type. Always create a copy, so that the padding bytes for
+            # "vidx" are removed and the array is made C-contiguous for fast conversion to bytes.
+            unique_uv_pairs = unique_uv_pairs.astype(luv_fbx_structured_type)
+            # View as unstructured so that the array matches the type to be exported.
+            unique_uv_pairs = unique_uv_pairs.view(luv_fbx_dtype)
 
-            # Convert to the types needed for fbx
-            unique_uv_pairs = unique_uv_pairs.astype(luv_fbx_dtype, copy=False)
+            # Convert to the type needed for fbx
             uv_indices = astype_view_signedness(uv_indices, lv_ifx_fbx_dtype)
 
             elem_data_single_float64_array(lay_uv, b"UV", unique_uv_pairs)
             elem_data_single_int32_array(lay_uv, b"UVIndex", uv_indices)
             del triplets
-            del _unique_triplets
+            del unique_triplets
             del unique_uv_pairs
             del uv_indices
         del t_luv
