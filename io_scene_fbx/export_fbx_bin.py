@@ -762,14 +762,14 @@ def fbx_data_mesh_shapes_elements(root, me_obj, me, scene_data, fbx_me_tmpl, fbx
         # Use vgroups as weights, if defined.
         if shape.vertex_group and shape.vertex_group in me_obj.bdata.vertex_groups:
             shape_verts_weights = numpy.zeros(len(shape_verts_idx), dtype=numpy.float64)
-            # We get slightly faster iteration and indexing using the underlying memoryview objects
-            weights_memoryview = shape_verts_weights.data
-            idx_memoryview = shape_verts_idx.data
+            # It's slightly faster to iterate and index the underlying memoryview objects
+            mv_shape_verts_weights = shape_verts_weights.data
+            mv_shape_verts_idx = shape_verts_idx.data
             vg_idx = me_obj.bdata.vertex_groups[shape.vertex_group].index
-            for sk_idx, v_idx in enumerate(idx_memoryview):
+            for sk_idx, v_idx in enumerate(mv_shape_verts_idx):
                 for vg in vertices[v_idx].groups:
                     if vg.group == vg_idx:
-                        weights_memoryview[sk_idx] = vg.weight
+                        mv_shape_verts_weights[sk_idx] = vg.weight
                         break
             shape_verts_weights *= 100.0
         else:
@@ -941,7 +941,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         me.edges.foreach_get('is_loose', loose_mask)
 
         indices_of_loose_edges = numpy.flatnonzero(loose_mask)
-        # Since we add two loops per loose edge, repeat the indices so that there's one for each new loop
+        # Since two loops are added per loose edge, repeat the indices so that there's one for each new loop
         new_loop_edge_indices = numpy.repeat(indices_of_loose_edges, 2)
 
         # Get the loose edge vertex index pairs
@@ -979,13 +979,12 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         # Sort each [edge_start_n, edge_end_n] pair to get edge keys.
         t_pvi_edge_keys.sort(axis=1)
 
-        # Since we're finding unique edge keys, if there are multiple edges that share the same vertices (which
-        # shouldn't normally happen), only the first edge found in loops will be exported along with its crease/sharp.
-        # To export separate edges that share the same vertices, .unique can be run with t_lei as the first argument and
-        # without the axis argument, finding unique edges rather than unique edge keys.
+        # Note that finding unique edge keys means that if there are multiple edges that share the same vertices (which
+        # shouldn't normally happen), only the first edge found in loops will be exported along with its per-edge data.
         #
-        # Since we don't care about sorting, we can pass t_pvi_edge_keys in as raw data (with each element being a
-        # single edge key) for a performance boost
+        # numpy.unique also sorts the results, but because the unique edge keys are exported in the order they are
+        # found, the sorting part is irrelevant and t_pvi_edge_keys can be passed to numpy.unique viewed as raw data for
+        # better performance. Each element of raw data will be the combined raw data for a single edge key.
         _unique_pvi_edge_keys_raw, t_eli = (
             numpy.unique(t_pvi_edge_keys.view(f'V{t_pvi_edge_keys.itemsize * 2}'), return_index=True))
 
@@ -993,11 +992,11 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         # original order of t_pvi_edge_keys, they must be sorted.
         t_eli.sort()
 
-        # Edge index of each element in unique t_pvi_edge_keys, used to map per-edge data such as sharp and creases.
+        # Get the edge index of each unique edge-key
         t_pvi_edge_indices = t_lei[t_eli]
 
         # Ensure t_pvi is the correct number of bits before inverting each loop end index.
-        # We always create a copy so that t_lvi doesn't get modified in the next step.
+        # Always create a copy so that t_lvi doesn't get modified in the next step.
         t_pvi = t_lvi.astype(pvi_fbx_dtype)
 
         # We have to ^-1 last index of each loop.
@@ -1059,8 +1058,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                 # that polygon.
                 # Polygon sides can be calculated from the element-wise difference of loop starts appended by the number
                 # of loops. Alternatively, polygon sides can be retrieved directly from the 'loop_total' attribute of
-                # polygons, but since we already have t_ls, it tends to be quicker to calculate from t_ls when above
-                # around 10_000 polygons.
+                # polygons. It tends to be quicker to calculate from t_ls when above around 10,000 polygons.
                 polygon_sides = numpy.diff(mesh_t_ls_view, append=mesh_loop_nbr)
                 p_flat_loop_mask = numpy.repeat(p_flat_mask, polygon_sides)
                 # Convert flat shaded loops to flat shaded (sharp) edge indices.
@@ -1162,8 +1160,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_nor, b"ReferenceInformationType", b"IndexToDirect")
 
             # Tuple of unique sorted normals and then the index in the unique sorted normals of each normal in t_ln.
-            # Since we don't care about how the normals are sorted, only that they're unique, it's faster if we
-            # view them as raw data.
+            # Since the order doesn't matter, only that they're unique, it's faster to view them as raw data.
             t_ln, t_lnidx = numpy.unique(t_ln.view(f'V{t_ln.itemsize * 3}'), return_inverse=True)
 
             # View in the original dtype again
@@ -1260,7 +1257,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     vcolnumber = 0 if colors_type == 'NONE' else len(me.color_attributes)
     if vcolnumber:
         color_prop_name = "color_srgb" if colors_type == 'SRGB' else "color"
-        # ByteColorAttribute color also gets returned by the API as single precision float
+        # ByteColorAttribute color also gets returned by the API as single precision float.
         bl_lc_dtype = numpy.single
         fbx_lc_dtype = numpy.float64
         fbx_lcidx_dtype = numpy.int32
@@ -1277,7 +1274,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_vcol, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_vcol, b"ReferenceInformationType", b"IndexToDirect")
 
-            # For performance, view as raw data, with one element per rgba color, since we don't care about sorting
+            # For performance, view as raw data, with one element per rgba color, since sorting is not important.
             t_lc, col_indices = numpy.unique(t_lc.view(f'V{t_lc.itemsize * 4}'), return_inverse=True)
             # View back as the original dtype
             t_lc = t_lc.view(bl_lc_dtype)
@@ -2626,12 +2623,12 @@ def fbx_data_from_scene(scene, depsgraph, settings):
                 # Exclude cos similar to ref_cos and get the indices of the cos that remain
                 shape_verts_co, shape_verts_idx = shape_difference_exclude_similar(sv_cos, ref_cos)
 
-                # Ensure the arrays are of the correct type
-                shape_verts_co = shape_verts_co.astype(co_fbx_dtype, copy=False)
-                shape_verts_idx = astype_view_signedness(shape_verts_idx, idx_fbx_dtype)
-
                 if not shape_verts_co.size:
                     shape_verts_co, shape_verts_idx = empty_verts_fallbacks()
+                else:
+                    # Ensure the arrays are of the correct type
+                    shape_verts_co = shape_verts_co.astype(co_fbx_dtype, copy=False)
+                    shape_verts_idx = astype_view_signedness(shape_verts_idx, idx_fbx_dtype)
 
             channel_key, geom_key = get_blender_mesh_shape_channel_key(me, shape)
             data = (channel_key, geom_key, shape_verts_co, shape_verts_idx)
