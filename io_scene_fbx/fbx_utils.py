@@ -445,7 +445,39 @@ def astype_view_signedness(arr, new_type):
 
     return arr.astype(new_type, copy=False)
 
-    return arr.astype(new_type, *args, copy=False, **kwargs)
+
+def unique_first_axis_no_sort(ar, return_index=False, return_inverse=False, return_counts=False):
+    """numpy.unique but with an optimisation when sorting is not required.
+    Intended for 2d arrays with more than one element per row and structured arrays with more than one field since these
+    are more costly to sort because they are sorted on a per-element-per-row or per-field basis, similar to sorting a
+    list of tuples.
+
+    The returned unique array is always flattened."""
+    # View each row as a single element of raw bytes with the same total itemsize as the row.
+    # If there are no rows, each element will be viewed as raw bytes.
+    elements_per_row = math.prod(ar.shape[1:])
+    # TODO: Simplify for the assumption of a C-contiguous array
+    # To view as a dtype of different size, the last axis (entire array in numpy 1.22 and earlier) must be C-contiguous.
+    # reshape will create a C-contiguous copy if it's not possible to view as the new shape
+    ar_raw_view = ar.reshape(-1, elements_per_row)
+    is_last_axis_contiguous = ar_raw_view.shape[-1] == 1 or ar_raw_view.strides[-1] == ar_raw_view.dtype
+    if numpy.version.version < "1.23" or not is_last_axis_contiguous:
+        # TODO: Example np.arange(24).reshape(-1, 2, 6)[:, :, ::2].reshape(-1, 3) to be viewed as 3 elements at a time
+        ar_raw_view = numpy.ascontiguousarray(ar_raw_view)
+    ar_raw_view = ar_raw_view.view('V%i' % (ar.itemsize * elements_per_row))
+
+    result = numpy.unique(ar_raw_view, return_index=return_index, return_inverse=return_inverse,
+                          return_counts=return_counts)
+
+    unique = result[0] if isinstance(result, tuple) else result
+    # View in the original dtype
+    unique = unique.view(ar.dtype)
+    # If it is useful to return the same number of elements per row and extra dimensions per row as the input array:
+    # unique.shape = (-1, *ar.shape[1:])
+    if isinstance(result, tuple):
+        return (unique,) + result[1:]
+    else:
+        return unique
 
 
 # ##### UIDs code. #####

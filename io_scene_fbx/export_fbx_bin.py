@@ -49,6 +49,7 @@ from .fbx_utils import (
     PerfMon,
     units_blender_to_fbx_factor, units_convertor, units_convertor_iter,
     matrix4_to_array, similar_values, shape_difference_exclude_similar, astype_view_signedness,
+    unique_first_axis_no_sort,
     # Mesh transform helpers.
     vcos_transformed, nors_transformed,
     # UUID from key.
@@ -981,14 +982,9 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
         # Note that finding unique edge keys means that if there are multiple edges that share the same vertices (which
         # shouldn't normally happen), only the first edge found in loops will be exported along with its per-edge data.
-        #
-        # numpy.unique also sorts the results, but because the unique edge keys are exported in the order they are
-        # found, the sorting part is irrelevant and t_pvi_edge_keys can be passed to numpy.unique viewed as raw data for
-        # better performance. Each element of raw data will be the combined raw data for a single edge key.
-        _unique_pvi_edge_keys_raw, t_eli = (
-            numpy.unique(t_pvi_edge_keys.view(f'V{t_pvi_edge_keys.itemsize * 2}'), return_index=True))
+        _unique_pvi_edge_keys, t_eli = unique_first_axis_no_sort(t_pvi_edge_keys, return_index=True)
 
-        # Indices of the elements in t_pvi_edge_keys that produce _unique_pvi_edge_keys_raw. To get the indices in the
+        # Indices of the elements in t_pvi_edge_keys that produce _unique_pvi_edge_keys. To get the indices in the
         # original order of t_pvi_edge_keys, they must be sorted.
         t_eli.sort()
 
@@ -1006,7 +1002,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         loop_end_indices = t_ls - 1
         t_pvi[loop_end_indices] ^= -1
         del t_pvi_edge_keys
-        del _unique_pvi_edge_keys_raw
+        del _unique_pvi_edge_keys
         del loop_end_indices
     else:
         # Should be empty, but make sure it's the correct type.
@@ -1159,12 +1155,8 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_nor, b"ReferenceInformationType", b"IndexToDirect")
 
-            # Tuple of unique sorted normals and then the index in the unique sorted normals of each normal in t_ln.
-            # Since the order doesn't matter, only that they're unique, it's faster to view them as raw data.
-            t_ln, t_lnidx = numpy.unique(t_ln.view(f'V{t_ln.itemsize * 3}'), return_inverse=True)
-
-            # View in the original dtype again
-            t_ln = export_ln.view(ln_bl_dtype)
+            # Unique normals and then the index in the unique normals of each normal in t_ln.
+            t_ln, t_lnidx = unique_first_axis_no_sort(t_ln.reshape(-1, 3), return_inverse=True)
 
             # Convert the types for fbx
             t_ln = t_ln.astype(ln_fbx_dtype, copy=False)
@@ -1274,10 +1266,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_vcol, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_vcol, b"ReferenceInformationType", b"IndexToDirect")
 
-            # For performance, view as raw data, with one element per rgba color, since sorting is not important.
-            t_lc, col_indices = numpy.unique(t_lc.view(f'V{t_lc.itemsize * 4}'), return_inverse=True)
-            # View back as the original dtype
-            t_lc = t_lc.view(bl_lc_dtype)
+            t_lc, col_indices = unique_first_axis_no_sort(t_lc.reshape(-1, 4), return_inverse=True)
             if is_point:
                 # for "point" domain colors, we could directly emit them
                 # with a "ByVertex" mapping type, but some software does not
@@ -1309,25 +1298,19 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         # Looks like this mapping is also expected to convey UV islands (arg..... :((((( ).
         # So we need to generate unique triplets (uv, vertex_idx) here, not only just based on UV values.
 
-        # The uv components and vertex index can be combined and viewed as a structured type triplet such as
+        # The uv components and vertex index can be combined and viewed as a structured type triplet
         triplet_dtype = numpy.dtype([("u", t_luv.dtype), ("v", t_luv.dtype), ("vidx", t_lvidx.dtype)])
-        # but since only uniqueness is required and not sorting, it's faster to find unique triplets by treating each
-        # triplet as raw byte data of the same size.
-        triplet_byte_dtype = "V%d" % triplet_dtype.itemsize
-        single_raw_byte_dtype = "V1"
 
-        # Create structured type for only "u" and "v" where each field uses the fbx type, used for simultaneously
-        luv_fbx_structured_type = numpy.dtype([("u", luv_fbx_dtype.dtype), ("v", luv_fbx_dtype.dtype)])
+        # Create structured type for only "u" and "v" where each field uses the fbx type
+        luv_fbx_structured_type = numpy.dtype([("u", luv_fbx_dtype), ("v", luv_fbx_dtype)])
 
         # Since the t_luv and t_lvidx arrays are different types, we have to view them as the same type to easily join
-        # them together.
-        t_luv_byte_view = t_luv.view(single_raw_byte_dtype)
-        t_lvidx_byte_view = t_lvidx.view(single_raw_byte_dtype)
-        # Next change the shape of the views to 2D whereby each row has the raw bytes for a single element of the
-        # original array. For t_luv, we consider each uv pair to be a single element, so it's twice the number of bytes
-        # per row.
-        t_luv_byte_view.shape = (-1, 2 * t_luv.dtype.itemsize)
-        t_lvidx_byte_view.shape = (-1, t_lvidx.dtype.itemsize)
+        # them together and this is significantly faster than using numpy.lib.recfunctions.merge_arrays.
+        single_raw_byte_dtype = "V1"
+        # View each array as raw bytes whereby each row contains all the bytes for a single element.
+        t_lvidx_byte_view = t_lvidx.reshape(-1, 1).view(single_raw_byte_dtype)
+        # For t_luv, we consider each uv pair to be a single element.
+        t_luv_byte_view = t_luv.reshape(-1, 2).view(single_raw_byte_dtype)
 
         for uvindex, uvlayer in enumerate(me.uv_layers):
             uvlayer.data.foreach_get("uv", t_luv)
@@ -1351,21 +1334,20 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_uv, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_uv, b"ReferenceInformationType", b"IndexToDirect")
 
-            # Stack both arrays (viewed as raw bytes) into a single array and view as triplets of raw bytes
+            # Stack both arrays (viewed as raw bytes) into a single array and view as triplets
             # If each uv component and idx was a single byte, it would look something like this:
             # [[u0,v0],       [[idx0],    [[u0,v0,idx0],                              [[triplet0],
             #  [u1,v1], stack  [idx1], ->  [u1,v1,idx1],  view(triplet_byte_dtype) ->  [triplet1],
             #    ...             ...           ...                                        ...
             #  [un,vn]]        [idxn]]     [un,vn,idxn]]                               [tripletn]]
-            triplets = numpy.column_stack((t_luv_byte_view, t_lvidx_byte_view)).view(triplet_byte_dtype)
+            triplets = numpy.column_stack((t_luv_byte_view, t_lvidx_byte_view)).view(triplet_dtype)
 
-            # .unique without an axis argument flattens the input triplet array to 1d
-            unique_triplets, uv_indices = numpy.unique(triplets, return_inverse=True)
+            unique_triplets, uv_indices = unique_first_axis_no_sort(triplets, return_inverse=True)
 
             # Extract only the uvs from unique_triplets
             # Create multi-field view of only "u" and "v". Note that there are padding bytes for the unindexed "vidx"
             # field, so viewing as t_luv.dtype is not possible because it would include those padding bytes in the view.
-            unique_uv_pairs = unique_triplets.view(triplet_dtype)[["u", "v"]]
+            unique_uv_pairs = unique_triplets[["u", "v"]]
             # Convert to structured datatype matching the fbx type. Always create a copy, so that the padding bytes for
             # "vidx" are removed and the array is made C-contiguous for fast conversion to bytes.
             unique_uv_pairs = unique_uv_pairs.astype(luv_fbx_structured_type)
