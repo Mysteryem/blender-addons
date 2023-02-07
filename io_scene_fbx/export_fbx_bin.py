@@ -49,7 +49,6 @@ from .fbx_utils import (
     PerfMon,
     units_blender_to_fbx_factor, units_convertor, units_convertor_iter,
     matrix4_to_array, similar_values, shape_difference_exclude_similar, astype_view_signedness,
-    unique_first_axis_no_sort,
     # Mesh transform helpers.
     vcos_transformed, nors_transformed,
     # UUID from key.
@@ -982,7 +981,13 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
 
         # Note that finding unique edge keys means that if there are multiple edges that share the same vertices (which
         # shouldn't normally happen), only the first edge found in loops will be exported along with its per-edge data.
-        _unique_pvi_edge_keys, t_eli = unique_first_axis_no_sort(t_pvi_edge_keys, return_index=True)
+        # Since vertex indices are integers, each pair can be viewed as a single integer of double the itemsize for a
+        # significant speed increase compared to calling numpy.unique with `t_pvi_edge_keys` and `axis=0`.
+        combined_itemsize = t_pvi_edge_keys.itemsize * 2
+        # Max integer size is 8 bytes for int64, to go above that, a raw bytes dtype 'V#' must be used instead, which is
+        # slightly slower.
+        combined_dtype = ("i%i" if combined_itemsize <= 8 else "V%i") % combined_itemsize
+        _unique_pvi_edge_keys, t_eli = numpy.unique(t_pvi_edge_keys.view(combined_dtype), return_index=True)
 
         # Indices of the elements in t_pvi_edge_keys that produce _unique_pvi_edge_keys. To get the indices in the
         # original order of t_pvi_edge_keys, they must be sorted.
@@ -1156,7 +1161,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_nor, b"ReferenceInformationType", b"IndexToDirect")
 
             # Unique normals and then the index in the unique normals of each normal in t_ln.
-            t_ln, t_lnidx = unique_first_axis_no_sort(t_ln.reshape(-1, 3), return_inverse=True)
+            t_ln, t_lnidx = numpy.unique(t_ln.reshape(-1, 3), return_inverse=True, axis=0)
 
             # Convert the types for fbx
             t_ln = t_ln.astype(ln_fbx_dtype, copy=False)
@@ -1266,7 +1271,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             elem_data_single_string(lay_vcol, b"MappingInformationType", b"ByPolygonVertex")
             elem_data_single_string(lay_vcol, b"ReferenceInformationType", b"IndexToDirect")
 
-            t_lc, col_indices = unique_first_axis_no_sort(t_lc.reshape(-1, 4), return_inverse=True)
+            t_lc, col_indices = numpy.unique(t_lc.reshape(-1, 4), return_inverse=True, axis=0)
             if is_point:
                 # for "point" domain colors, we could directly emit them
                 # with a "ByVertex" mapping type, but some software does not
@@ -1342,7 +1347,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
             #  [un,vn]]        [idxn]]     [un,vn,idxn]]                               [tripletn]]
             triplets = numpy.column_stack((t_luv_byte_view, t_lvidx_byte_view)).view(triplet_dtype)
 
-            unique_triplets, uv_indices = unique_first_axis_no_sort(triplets, return_inverse=True)
+            unique_triplets, uv_indices = numpy.unique(triplets, return_inverse=True)
 
             # Extract only the uvs from unique_triplets
             # Create multi-field view of only "u" and "v". Note that there are padding bytes for the unindexed "vidx"

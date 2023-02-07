@@ -446,47 +446,6 @@ def astype_view_signedness(arr, new_type):
     return arr.astype(new_type, copy=False)
 
 
-def unique_first_axis_no_sort(ar, return_index=False, return_inverse=False, return_counts=False):
-    """numpy.unique but with an optimisation when sorting is not required.
-    Intended for 2d arrays with more than one element per row and structured arrays with more than one field because
-    they are more costly to sort due to being compared one row-element/field at a time, similar to comparing tuples.
-
-    The second axis of the input array (entire array in numpy 1.22 and older) must be C-contiguous if there is more than
-    element per row.
-
-    The returned unique array is always flattened.
-
-    Float type caveats:
-    Positive and negative zero have different byte representations so will be considered different.
-    NaN values can also have different byte representations (signalling/quiet and then custom payloads), each unique
-    representation will be collapsed into one. It's rare to encounter NaN values in the first place and rarer still
-    different types of NaN. Python float examples on my hardware: math.nan, math.inf*math.inf, math.inf-math.inf
-    """
-    # View each row as a single element of raw bytes with the same total itemsize as the row.
-    # If there are no rows, each element will be viewed as raw bytes.
-    elements_per_row = math.prod(ar.shape[1:])
-    raw_bytes_dtype = 'V%i' % (ar.itemsize * elements_per_row)
-    # The last axis of the array must be a multiple of the new dtype, so reshape such that the last axis is the same
-    # size as the new dtype.
-    ar_view = ar.view()
-    ar_view.shape = (-1, elements_per_row)
-    # View as elements of raw bytes whereby each element has the same total number of bytes as an entire row.
-    # To view as a dtype of different size, the last axis (entire array in numpy 1.22 and older) must be C-contiguous.
-    ar_view = ar_view.view(raw_bytes_dtype)
-
-    result = numpy.unique(ar_view, return_index=return_index, return_inverse=return_inverse, return_counts=return_counts)
-
-    unique = result[0] if isinstance(result, tuple) else result
-    # View in the original dtype
-    unique = unique.view(ar.dtype)
-    # To return the same number of elements per row and extra dimensions per row as the input array:
-    # unique.shape = (-1, *ar.shape[1:])
-    if isinstance(result, tuple):
-        return (unique,) + result[1:]
-    else:
-        return unique
-
-
 # ##### UIDs code. #####
 
 # ID class (mere int).
