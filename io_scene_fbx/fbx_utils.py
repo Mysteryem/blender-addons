@@ -448,31 +448,38 @@ def astype_view_signedness(arr, new_type):
 
 def unique_first_axis_no_sort(ar, return_index=False, return_inverse=False, return_counts=False):
     """numpy.unique but with an optimisation when sorting is not required.
-    Intended for 2d arrays with more than one element per row and structured arrays with more than one field since these
-    are more costly to sort because they are sorted on a per-element-per-row or per-field basis, similar to sorting a
-    list of tuples.
+    Intended for 2d arrays with more than one element per row and structured arrays with more than one field because
+    they are more costly to sort due to being compared one row-element/field at a time, similar to comparing tuples.
 
-    The returned unique array is always flattened."""
+    The second axis of the input array (entire array in numpy 1.22 and older) must be C-contiguous if there is more than
+    element per row.
+
+    The returned unique array is always flattened.
+
+    Float type caveats:
+    Positive and negative zero have different byte representations so will be considered different.
+    NaN values can also have different byte representations (signalling/quiet and then custom payloads), each unique
+    representation will be collapsed into one. It's rare to encounter NaN values in the first place and rarer still
+    different types of NaN. Python float examples on my hardware: math.nan, math.inf*math.inf, math.inf-math.inf
+    """
     # View each row as a single element of raw bytes with the same total itemsize as the row.
     # If there are no rows, each element will be viewed as raw bytes.
     elements_per_row = math.prod(ar.shape[1:])
-    # TODO: Simplify for the assumption of a C-contiguous array
-    # To view as a dtype of different size, the last axis (entire array in numpy 1.22 and earlier) must be C-contiguous.
-    # reshape will create a C-contiguous copy if it's not possible to view as the new shape
-    ar_raw_view = ar.reshape(-1, elements_per_row)
-    is_last_axis_contiguous = ar_raw_view.shape[-1] == 1 or ar_raw_view.strides[-1] == ar_raw_view.dtype
-    if numpy.version.version < "1.23" or not is_last_axis_contiguous:
-        # TODO: Example np.arange(24).reshape(-1, 2, 6)[:, :, ::2].reshape(-1, 3) to be viewed as 3 elements at a time
-        ar_raw_view = numpy.ascontiguousarray(ar_raw_view)
-    ar_raw_view = ar_raw_view.view('V%i' % (ar.itemsize * elements_per_row))
+    raw_bytes_dtype = 'V%i' % (ar.itemsize * elements_per_row)
+    # The last axis of the array must be a multiple of the new dtype, so reshape such that the last axis is the same
+    # size as the new dtype.
+    ar_view = ar.view()
+    ar_view.shape = (-1, elements_per_row)
+    # View as elements of raw bytes whereby each element has the same total number of bytes as an entire row.
+    # To view as a dtype of different size, the last axis (entire array in numpy 1.22 and older) must be C-contiguous.
+    ar_view = ar_view.view(raw_bytes_dtype)
 
-    result = numpy.unique(ar_raw_view, return_index=return_index, return_inverse=return_inverse,
-                          return_counts=return_counts)
+    result = numpy.unique(ar_view, return_index=return_index, return_inverse=return_inverse, return_counts=return_counts)
 
     unique = result[0] if isinstance(result, tuple) else result
     # View in the original dtype
     unique = unique.view(ar.dtype)
-    # If it is useful to return the same number of elements per row and extra dimensions per row as the input array:
+    # To return the same number of elements per row and extra dimensions per row as the input array:
     # unique.shape = (-1, *ar.shape[1:])
     if isinstance(result, tuple):
         return (unique,) + result[1:]
