@@ -409,9 +409,9 @@ def nors_transformed(raw_nors, m=None):
     return _mat4_vec3_array_multiply(m, raw_nors)
 
 
-def astype_view_signedness(arr, new_type):
-    """Unsafely views data with the signedness of the new type if the itemsize and byteorder of arr matches but the
-    signedness does not, otherwise calls numpy.ndarray.astype with copy=False.
+def astype_view_signedness(arr, new_dtype):
+    """Unsafely views arr as new_dtype if the itemsize and byteorder of arr matches but the signedness does not,
+    otherwise calls numpy.ndarray.astype with copy=False.
 
     The benefit of copy=False is that if the array can be safely viewed as the new type, then a view is made, instead of
     a copy with the new type.
@@ -419,31 +419,29 @@ def astype_view_signedness(arr, new_type):
     Unsigned types can't be viewed safely as signed or vice-versa, meaning that a copy would always be made by
     .astype(..., copy=False).
 
-    This is intended for viewing uintc (variable itemsize) data as int32 when the itemsizes match."""
-    if not isinstance(new_type, numpy.dtype):
-        # new_type could be a type instance. Make sure it's a dtype, so we can get its itemsize and kind.
-        new_type = numpy.dtype(new_type)
-
+    This is intended for viewing uintc data (a common Blender C type with variable itemsize, though usually 4 bytes, so
+    uint32) as int32 (a common FBX type), when the itemsizes match."""
     arr_dtype = arr.dtype
-    # If the itemsize differs then a view is immediately impossible for a larger new_type or more complicated for a
-    # smaller dtype.
-    # For simplicity, we're only handling dtypes of the same itemsize and byteorder, but opposite signedness.
-    if arr.itemsize != new_type and arr.itemsize == new_type.itemsize and arr_dtype.byteorder == new_type.byteorder:
-        # Signed and unsigned int are opposite in terms of signedness. Other types don't have signedness
-        opposite_signedness_kinds = {'i': 'u', 'u': 'i'}
 
-        arr_dtype_kind = arr_dtype.kind
-        if arr_dtype_kind in opposite_signedness_kinds:
-            # Get the opposite kind for the input array's dtype
-            opposite_kind = opposite_signedness_kinds[arr_dtype_kind]
+    if not isinstance(new_dtype, numpy.dtype):
+        # new_dtype could be a type instance or a string, but it needs to be a dtype to compare its itemsize, byteorder
+        # and kind.
+        new_dtype = numpy.dtype(new_dtype)
 
-            # If new_type has opposite signedness, create a new dtype of the input array's dtype, but with opposite
-            # signedness and return a view of the input array with that new dtype
-            if new_type.kind == opposite_kind:
-                opposite_kind_dtype = numpy.dtype(arr_dtype.str.replace(arr_dtype_kind, opposite_kind))
-                return arr.view(opposite_kind_dtype)
-
-    return arr.astype(new_type, copy=False)
+    # For simplicity, only dtypes of the same itemsize and byteorder, but opposite signedness, are handled. Everything
+    # else is left to .astype.
+    arr_kind = arr_dtype.kind
+    new_kind = new_dtype.kind
+    if (
+        # Signed and unsigned int are opposite in terms of signedness. Other types don't have signedness.
+        ((arr_kind == 'i' and new_kind == 'u') or (arr_kind == 'u' and new_kind == 'i'))
+        and arr_dtype.itemsize == new_dtype.itemsize
+        and arr_dtype.byteorder == new_dtype.byteorder
+    ):
+        # new_dtype has opposite signedness and matching itemsize and byteorder, so return a view of the new type.
+        return arr.view(new_dtype)
+    else:
+        return arr.astype(new_dtype, copy=False)
 
 
 # ##### UIDs code. #####
