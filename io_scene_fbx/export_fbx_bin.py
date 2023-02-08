@@ -50,7 +50,7 @@ from .fbx_utils import (
     units_blender_to_fbx_factor, units_convertor, units_convertor_iter,
     matrix4_to_array, similar_values, shape_difference_exclude_similar, astype_view_signedness,
     # Mesh transform helpers.
-    vcos_transformed, nors_transformed,
+    vcos_transform, nors_transform,
     # UUID from key.
     get_fbx_uuid_from_key,
     # Key generators.
@@ -895,7 +895,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
     t_co = numpy.empty(len(me.vertices) * 3, dtype=co_bl_dtype)
     me.vertices.foreach_get("co", t_co)
     elem_data_single_float64_array(geom, b"Vertices",
-                                   vcos_transformed(t_co, geom_mat_co).astype(co_fbx_dtype, copy=False))
+                                   vcos_transform(t_co, geom_mat_co).astype(co_fbx_dtype, copy=False))
     del t_co
 
     # Polygon indices.
@@ -1151,7 +1151,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
         ln_fbx_dtype = numpy.float64
         t_ln = numpy.empty(len(me.loops) * 3,  dtype=ln_bl_dtype)
         me.loops.foreach_get("normal", t_ln)
-        t_ln = nors_transformed(t_ln, geom_mat_no)
+        t_ln = nors_transform(t_ln, geom_mat_no)
         if 0:
             lnidx_fbx_dtype = numpy.int32
             lay_nor = elem_data_single_int32(geom, b"LayerElementNormal", 0)
@@ -1224,7 +1224,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Binormals",
-                                                       nors_transformed(t_ln, geom_mat_no)
+                                                       nors_transform(t_ln, geom_mat_no)
                                                        .astype(ln_fbx_dtype, copy=False))
                         # Binormal weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"BinormalsW", t_lnw)
@@ -1238,7 +1238,7 @@ def fbx_data_mesh_elements(root, me_obj, scene_data, done_meshes):
                         elem_data_single_string(lay_nor, b"MappingInformationType", b"ByPolygonVertex")
                         elem_data_single_string(lay_nor, b"ReferenceInformationType", b"Direct")
                         elem_data_single_float64_array(lay_nor, b"Tangents",
-                                                       nors_transformed(t_ln, geom_mat_no)
+                                                       nors_transform(t_ln, geom_mat_no)
                                                        .astype(ln_fbx_dtype, copy=False))
                         # Tangent weights, no idea what it is.
                         # elem_data_single_float64_array(lay_nor, b"TangentsW", t_lnw)
@@ -2595,7 +2595,7 @@ def fbx_data_from_scene(scene, depsgraph, settings):
                 me.vertices.foreach_get("co", _cos)
             else:
                 shape_key.data.foreach_get("co", _cos)
-            return vcos_transformed(_cos, geom_mat_co)
+            return vcos_transform(_cos, geom_mat_co)
 
         for shape in me.shape_keys.key_blocks[1:]:
             # Only write vertices really different from base coordinates!

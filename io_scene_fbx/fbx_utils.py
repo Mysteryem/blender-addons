@@ -354,7 +354,7 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False, in_place=True):
     translation = mat_np.T[3]
 
     if in_place and not return_4d:
-        # Matrix multiplication of arrays with shapes (n,k)@(k,m) produces a result with shape (n,m), which will match
+        # Matrix multiplication of arrays with shapes (n,k) @ (k,m) produces a result with shape (n,m), which will match
         # the shape of vec3_array when returning 3d
         out = vec3_array
     else:
@@ -381,7 +381,7 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False, in_place=True):
     # └xn, yn, zn┘
 
     # There's no, or negligible, performance difference between the two options, however, the result of the latter
-    # will be C contiguous in memory, making it faster to convert to flattened bytes with result_3d.tobytes().
+    # will be C contiguous in memory, making it faster to convert to flattened bytes with .tobytes().
 
     # First option:
     # result_no_translation_T = mat_no_translation @ vec3_array.T
@@ -398,11 +398,11 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False, in_place=True):
         return result_no_translation
 
 
-def vcos_transformed(raw_cos, m=None):
+def vcos_transform(raw_cos, m=None):
     return _mat4_vec3_array_multiply(m, raw_cos)
 
 
-def nors_transformed(raw_nors, m=None):
+def nors_transform(raw_nors, m=None):
     # Great, now normals are also expected 4D!
     # XXX Back to 3D normals for now!
     # return _mat4_vec3_array_multiply(m, raw_nors, return_4d=True)
