@@ -305,23 +305,18 @@ def shape_difference_exclude_similar(sv_cos, ref_cos, e=1e-6):
     return difference_cos, shape_verts_idx
 
 
-def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False, in_place=True):
+def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
     """Multiply a 4d matrix by each 3d vector in an array and return as an array of either 3d or 4d vectors.
-    With in_place=True, modifies and returns a view of the input array if possible (never possible with return_4d=True).
-    """
+    A view of the input array is returned if the matrix is None and return_4d=False."""
     vec3_array = vec3_array.reshape(-1, 3)
-    if vec3_array.flags.owndata:
-        # If it wasn't possible to view the input vec3_array in the new shape, but the data did fit into the new shape,
-        # it will be in a copy of vec3_array, so can be modified in-place without affecting the input vec3_array.
-        in_place = True
 
     if mat4 is None:
         if return_4d:
-            index_to_insert_before = 3
-            value_to_insert = 1.0
-            return numpy.insert(vec3_array, index_to_insert_before, value_to_insert, axis=1)
+            vec4_array = numpy.ones((len(vec3_array), 4), dtype=vec3_array)
+            vec3_array[:, :3] = vec3_array
+            return vec4_array
         else:
-            return vec3_array if in_place else vec3_array.copy()
+            return vec3_array
 
     mat_np = numpy.array(mat4, dtype=vec3_array.dtype)
 
@@ -353,14 +348,6 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False, in_place=True):
     # [d, h, l, p]
     translation = mat_np.T[3]
 
-    if in_place and not return_4d:
-        # Matrix multiplication of arrays with shapes (n,k) @ (k,m) produces a result with shape (n,m), which will match
-        # the shape of vec3_array when returning 3d
-        out = vec3_array
-    else:
-        # A new array will be created for storing the result of the matrix multiplication
-        out = None
-
     # Currently, the arrangement of the vectors and the matrix cannot be multiplied, one of them must be transposed
     # ┌a, b, c┐   ┌x1, y1, z1┐
     # │e, f, g│ ? │x2, y2, z2│
@@ -387,22 +374,20 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False, in_place=True):
     # result_no_translation_T = mat_no_translation @ vec3_array.T
     # result_no_translation = result_no_translation_T.T
     # Second option:
-    # result_no_translation = vec3_array @ mat_no_translation.T
-    # Second option but with 'out' array specified:
-    result_no_translation = numpy.matmul(vec3_array, mat_no_translation.T, out=out)
+    result_no_translation = vec3_array @ mat_no_translation.T
 
     # Add the translation if there's any to add
     if translation.any():
-        return numpy.add(result_no_translation, translation, out=result_no_translation)
+        return result_no_translation + translation
     else:
         return result_no_translation
 
 
-def vcos_transform(raw_cos, m=None):
+def vcos_transformed(raw_cos, m=None):
     return _mat4_vec3_array_multiply(m, raw_cos)
 
 
-def nors_transform(raw_nors, m=None):
+def nors_transformed(raw_nors, m=None):
     # Great, now normals are also expected 4D!
     # XXX Back to 3D normals for now!
     # return _mat4_vec3_array_multiply(m, raw_nors, return_4d=True)
