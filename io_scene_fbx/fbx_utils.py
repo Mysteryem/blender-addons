@@ -371,16 +371,17 @@ def _mat4_vec3_array_multiply(mat4, vec3_array, return_4d=False):
     # will be C contiguous in memory, making it faster to convert to flattened bytes with .tobytes().
 
     # First option:
-    # result_no_translation_T = mat_no_translation @ vec3_array.T
-    # result_no_translation = result_no_translation_T.T
+    # multiplied_vectors_T = mat_no_translation @ vec3_array.T
+    # multiplied_vectors = multiplied_vectors_T.T
     # Second option:
-    result_no_translation = vec3_array @ mat_no_translation.T
+    multiplied_vectors = vec3_array @ mat_no_translation.T
 
-    # Add the translation if there's any to add
-    if translation.any():
-        return result_no_translation + translation
-    else:
-        return result_no_translation
+    # Add the translation to each axis if there's any to add for that axis
+    for axis, axis_translation in zip(multiplied_vectors.T, translation):
+        if axis_translation != 0:
+            axis += axis_translation
+
+    return multiplied_vectors
 
 
 def vcos_transformed(raw_cos, m=None):
